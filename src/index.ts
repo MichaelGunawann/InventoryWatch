@@ -24,6 +24,16 @@ const SUPPLIER_DOMAINS = [
     "bukalapak.com",
 ];
 
+// Pack words with a fixed number of items, the same for every product.
+const FIXED_PACK_UNITS: Record<string, number> = {
+    pcs: 1, pc: 1, biji: 1, bungkus: 1, sachet: 1, botol: 1, kaleng: 1, pouch: 1,
+    lusin: 12,
+    kodi: 20,
+};
+
+// Pack words whose item count depends on the product; filled from inventory.units_per_carton.
+const CARTON_UNITS = ["dus", "karton", "carton", "ctn"];
+
 const server = new McpServer({
     name: "InventoryWatch",
     version: "1.0.0",
@@ -265,7 +275,7 @@ server.registerTool(
             return {
                 content: [{
                     type: "text" as const,
-                    text: `Search results for ${product.item_name} (${product.sku}, stock ${product.current_stock} < threshold ${product.safety_threshold}, search keyword: "${keyword}"):\n\n${output}`,
+                    text: `Search results for ${product.item_name} (${product.sku}, stock ${product.current_stock} < threshold ${product.safety_threshold}):\n\n${output}`,
                 }],
             };
         } catch (error) {
@@ -277,6 +287,130 @@ server.registerTool(
             };
         }
     });
+
+
+server.registerTool(
+    "compare_supplier_offers",
+    {
+        description: "Compare supplier offers for one product by price per unit and return the cheapest. Offers without a price or units per pack are excluded, not guessed.",
+        inputSchema: {
+            productName: z.string().describe("SKU or item name of the product being compared"),
+            offers: z.array(z.object({
+                supplier: z.string().describe("Supplier, store, or page title"),
+                url: z.string().describe("Source URL of the offer"),
+                price: z.number().optional().describe("Price in Rupiah as written in the search result; for a price range use the lowest price"),
+                unitsPerPack: z.number().optional().describe("Number of single items (bungkus, sachet, botol, kotak) the price buys, only if written, e.g. 40 for 'dus isi 40'"),
+                packQuantity: z.number().optional().describe("How many packs the price buys as written, e.g. 2 for '2 lusin'; default 1"),
+                packUnit: z.string().optional().describe("Pack word as written, e.g. 'dus', 'karton', 'lusin', 'kodi', 'pcs'"),
+                unitSize: z.string().optional().describe("Size of one item as written, e.g. '200ml', '1 liter', '85g'"),
+                packDescription: z.string().optional().describe("Pack description, e.g. '1 dus isi 40 pcs'"),
+            })).describe("Offers extracted from search_supplier_prices results"),
+        },
+    },
+    async ({ productName, offers }) => {
+        // Prices are only comparable per item of the same size, so offers are grouped by unitSize.
+        const sizeKey = (size?: string) => size
+            ?.toLowerCase()
+            .replace(/\s+/g, "")
+            .replace(/(gram|gr)$/, "g")
+            .replace(/(liter|litre|ltr)$/, "l") || "size not stated";
+
+        // The store's own carton size for this product, used when a listing says "1 dus" without the count.
+        const product = db.prepare(`
+            SELECT units_per_carton
+            FROM inventory
+            WHERE sku = ? OR item_name = ? COLLATE NOCASE
+        `).get(productName, productName) as { units_per_carton: number | null } | undefined;
+        const unitsPerCarton = product?.units_per_carton ?? null;
+
+        const isCount = (value?: number) => typeof value === "number" && Number.isInteger(value) && value >= 1;
+
+        // Item count the price buys, in priority order: written in the listing, fixed pack word, store carton data.
+        const resolveUnits = (offer: typeof offers[number]) => {
+            if (isCount(offer.unitsPerPack)) {
+                return { units: offer.unitsPerPack!, assumption: "" };
+            }
+
+            const quantity = isCount(offer.packQuantity) ? offer.packQuantity! : 1;
+            // Keep letters only, so "1dus", "Dus " and "(KARTON)" all match.
+            const unit = offer.packUnit?.toLowerCase().replace(/[^a-z]/g, "") ?? "";
+
+            if (unit in FIXED_PACK_UNITS) {
+                return { units: quantity * FIXED_PACK_UNITS[unit], assumption: "" };
+            }
+
+            if (CARTON_UNITS.includes(unit) && unitsPerCarton) {
+                return {
+                    units: quantity * unitsPerCarton,
+                    assumption: `count not written; assumed ${unitsPerCarton} pcs per ${unit} from store data`,
+                };
+            }
+
+            return null;
+        };
+
+        const valid = [];
+        const excluded = [];
+
+        for (const offer of offers) {
+            const hasPrice = typeof offer.price === "number" && offer.price > 0;
+            const resolved = resolveUnits(offer);
+
+            if (hasPrice && resolved) {
+                valid.push({ ...offer, ...resolved, unitPrice: offer.price! / resolved.units });
+            } else {
+                excluded.push(`${offer.supplier} (${!hasPrice ? "no price" : "units per pack unknown"}) - ${offer.url}`);
+            }
+        }
+
+        const rupiah = (value: number) => `Rp${Math.round(value).toLocaleString("id-ID")}`;
+        const excludedText = excluded.length > 0
+            ? `\n\nExcluded from comparison:\n${excluded.map((line) => `- ${line}`).join("\n")}`
+            : "";
+
+        if (valid.length === 0) {
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: `No comparable offers for ${productName}: every offer is missing a price or a known number of units per pack.${excludedText}`,
+                }],
+            };
+        }
+
+        valid.sort((a, b) => a.unitPrice - b.unitPrice);
+
+        const groups = new Map<string, typeof valid>();
+
+        for (const offer of valid) {
+            const key = sizeKey(offer.unitSize);
+            groups.set(key, [...(groups.get(key) ?? []), offer]);
+        }
+
+        const sections = [...groups.entries()].map(([size, group]) => {
+            const cheapest = group[0];
+            const ranking = group.map((offer, index) => [
+                `${index + 1}. ${offer.supplier}`,
+                `   Price: ${rupiah(offer.price!)} for ${offer.units} pcs${offer.packDescription ? ` (${offer.packDescription})` : ""}`,
+                ...(offer.assumption ? [`   Note: ${offer.assumption}`] : []),
+                `   Price per pcs: ${rupiah(offer.unitPrice)}`,
+                `   URL: ${offer.url}`,
+            ].join("\n")).join("\n");
+
+            return `Size: ${size}\nCheapest: ${cheapest.supplier} at ${rupiah(cheapest.unitPrice)} per pcs (${rupiah(cheapest.price!)} for ${cheapest.units} pcs${cheapest.assumption ? `, ${cheapest.assumption}` : ""}) - ${cheapest.url}\nRanking by price per pcs:\n${ranking}`;
+        });
+
+        const note = groups.size > 1
+            ? "\n\nNote: offers have different item sizes, so each size is compared separately. Prices are not comparable across sizes."
+            : "";
+
+        return {
+            content: [{
+                type: "text" as const,
+                text: `Supplier comparison for ${productName}:\n\n${sections.join("\n\n")}${note}${excludedText}`,
+            }],
+        };
+    },
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

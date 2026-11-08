@@ -84,6 +84,63 @@ const toolDeclarations: any[] = [
             required: ["productName"],
         },
     },
+    {
+        name: "compare_supplier_offers",
+        description:
+            "Compare supplier offers for one product by price per unit (pcs) and return the cheapest. Call this after search_supplier_prices whenever the user asks for the cheapest supplier or a price comparison.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                productName: {
+                    type: Type.STRING,
+                    description: "The SKU or item name of the product being compared.",
+                },
+                offers: {
+                    type: Type.ARRAY,
+                    description: "Offers extracted from the search_supplier_prices result for this product.",
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            supplier: {
+                                type: Type.STRING,
+                                description: "Supplier, store, or page title.",
+                            },
+                            url: {
+                                type: Type.STRING,
+                                description: "Source URL of the offer.",
+                            },
+                            price: {
+                                type: Type.NUMBER,
+                                description: "Price in Rupiah exactly as written in the search result, as a plain number (Rp155.245 -> 155245). For a price range use the lowest price. Omit if no price is written.",
+                            },
+                            unitsPerPack: {
+                                type: Type.NUMBER,
+                                description: "How many single items (bungkus, sachet, botol, kotak) that price buys, only if the result states it (e.g. 'dus isi 40' -> 40, '12 renceng x 10 sachet' -> 120). If only a count of renceng/packs is written without the items inside each, omit it.",
+                            },
+                            packQuantity: {
+                                type: Type.NUMBER,
+                                description: "How many packs the price buys as written, e.g. '2 lusin' -> 2, '1 dus' -> 1. Omit if not written.",
+                            },
+                            packUnit: {
+                                type: Type.STRING,
+                                description: "The pack word exactly as written, e.g. 'dus', 'karton', 'lusin', 'kodi', 'renceng', 'pcs'. Do not convert it to a number yourself. Omit if not written.",
+                            },
+                            unitSize: {
+                                type: Type.STRING,
+                                description: "Size of one item as written in the result, e.g. '200ml', '1 liter', '85g'. Omit if not stated.",
+                            },
+                            packDescription: {
+                                type: Type.STRING,
+                                description: "Pack description as written, e.g. '1 dus isi 40 pcs'.",
+                            },
+                        },
+                        required: ["supplier", "url"],
+                    },
+                },
+            },
+            required: ["productName", "offers"],
+        },
+    },
 ];
 
 async function askGemini(prompt: string): Promise<string> {
@@ -115,6 +172,13 @@ Rules:
 - Never invent prices, supplier names, stock quantities, or SKUs.
 - If supplier search fails or returns no useful prices, clearly say that verified pricing is unavailable.
 - If the user asks for both stock and price, call both tools.
+- When the user asks for the cheapest supplier or a price comparison, after search_supplier_prices call compare_supplier_offers once per product:
+  - Include only listings that are clearly the same product (same brand and variant; same size if the product name has a size). Leave out other products and other variants, for example Teh Gelas when comparing Teh Botol, or Indomie Goreng Jumbo / Cabe Ijo when comparing Indomie Goreng.
+  - Copy price, unitsPerPack, packQuantity, packUnit, and unitSize only from what the search result text says. Omit a field when it is not written; never estimate it. Never guess how many items are in a dus or karton; the tool fills that from store data.
+  - If the tool notes that a pack size was assumed from store data, tell the user.
+  - Never calculate price per unit or choose the cheapest yourself; report the result of compare_supplier_offers, including its source URL.
+  - If compare_supplier_offers returns several sizes, report the cheapest for each size and say the sizes are not comparable with each other.
+  - Say that the cheapest is among the search results found, and that prices exclude shipping and minimum order.
 - Treat tool results as the source of truth.
 - If a tool returns an error or cannot find a product, explain that clearly.
 - Do not confuse InventoryWatch with a wristwatch.
@@ -243,10 +307,10 @@ async function main() {
                             () =>
                                 reject(
                                     new Error(
-                                        "Gemini timed out after 30 seconds",
+                                        "Gemini timed out after 180 seconds",
                                     ),
                                 ),
-                            30000,
+                            180000,
                         );
                     }),
                 ]);
