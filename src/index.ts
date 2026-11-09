@@ -34,6 +34,43 @@ const FIXED_PACK_UNITS: Record<string, number> = {
 // Pack words whose item count depends on the product; filled from inventory.units_per_carton.
 const CARTON_UNITS = ["dus", "karton", "carton", "ctn"];
 
+type StockLevels = {
+    current_stock: number;
+    max_stock: number | null;
+    units_per_carton: number | null;
+};
+
+// Suggested order: refill up to max_stock, rounded UP to whole cartons when the carton size is known.
+function orderPlan(product: StockLevels) {
+    if (product.max_stock === null) {
+        return null;
+    }
+
+    const needed = Math.max(product.max_stock - product.current_stock, 0);
+    const cartons = product.units_per_carton ? Math.ceil(needed / product.units_per_carton) : null;
+    const orderPcs = cartons !== null ? cartons * product.units_per_carton! : needed;
+    const stockAfter = product.current_stock + orderPcs;
+
+    return { needed, cartons, orderPcs, stockAfter, overMax: stockAfter - product.max_stock };
+}
+
+function describeOrder(product: StockLevels) {
+    const plan = orderPlan(product);
+
+    if (!plan) {
+        return "Suggested order: unknown (max_stock is not set)";
+    }
+
+    const quantity = plan.cartons !== null
+        ? `${plan.cartons} carton(s) x ${product.units_per_carton} = ${plan.orderPcs} pcs`
+        : `${plan.orderPcs} pcs (carton size not set)`;
+    const overMax = plan.overMax > 0
+        ? ` (${plan.overMax} pcs above max_stock because of rounding up to whole cartons)`
+        : "";
+
+    return `Suggested order: ${quantity}, stock after order ${plan.stockAfter} / max ${product.max_stock}${overMax}`;
+}
+
 const server = new McpServer({
     name: "InventoryWatch",
     version: "1.0.0",
@@ -53,7 +90,8 @@ server.registerTool(
             FROM inventory
             WHERE sku = ?
                OR item_name LIKE ?
-        `).all(productId, `%${productId}%`) as {
+               OR search_keyword LIKE ?
+        `).all(productId, `%${productId}%`, `%${productId}%`) as {
             sku: string;
             item_name: string;
             current_stock: number;
@@ -145,21 +183,21 @@ server.registerTool(
 server.registerTool(
     "get_low_stock",
     {
-        description: "Return only products where current_stock is below safety_threshold. Call this before search_supplier_prices for restock recommendations.",
+        description: "Return only products where current_stock is below safety_threshold, with the suggested order quantity. Call this before search_supplier_prices for restock recommendations.",
         inputSchema: {},
     },
     async () => {
         const products = db.prepare(`
-            SELECT sku, item_name, current_stock, safety_threshold
+            SELECT sku, item_name, current_stock, safety_threshold, max_stock, units_per_carton
             FROM inventory
             WHERE current_stock < safety_threshold
             ORDER BY item_name
-        `).all() as {
+        `).all() as ({
             sku: string;
             item_name: string;
             current_stock: number;
             safety_threshold: number;
-        }[];
+        } & StockLevels)[];
 
         if (products.length === 0) {
             return {
@@ -175,6 +213,7 @@ server.registerTool(
             `SKU: ${product.sku}`,
             `Current stock: ${product.current_stock}`,
             `Safety threshold: ${product.safety_threshold}`,
+            describeOrder(product),
         ].join("\n")).join("\n\n");
 
         return {
@@ -317,11 +356,12 @@ server.registerTool(
 
         // The store's own carton size for this product, used when a listing says "1 dus" without the count.
         const product = db.prepare(`
-            SELECT units_per_carton
+            SELECT current_stock, max_stock, units_per_carton
             FROM inventory
             WHERE sku = ? OR item_name = ? COLLATE NOCASE
-        `).get(productName, productName) as { units_per_carton: number | null } | undefined;
+        `).get(productName, productName) as StockLevels | undefined;
         const unitsPerCarton = product?.units_per_carton ?? null;
+        const plan = product ? orderPlan(product) : null;
 
         const isCount = (value?: number) => typeof value === "number" && Number.isInteger(value) && value >= 1;
 
@@ -396,8 +436,16 @@ server.registerTool(
                 `   URL: ${offer.url}`,
             ].join("\n")).join("\n");
 
-            return `Size: ${size}\nCheapest: ${cheapest.supplier} at ${rupiah(cheapest.unitPrice)} per pcs (${rupiah(cheapest.price!)} for ${cheapest.units} pcs${cheapest.assumption ? `, ${cheapest.assumption}` : ""}) - ${cheapest.url}\nRanking by price per pcs:\n${ranking}`;
+            // Estimated cost using the cheapest supplier's own pack size: whole packs, rounded up, to cover what is needed.
+            const packs = plan && plan.needed > 0 ? Math.ceil(plan.needed / cheapest.units) : 0;
+            const estimate = packs > 0
+                ? `\nEstimated cost from this supplier: ${packs} pack(s) x ${rupiah(cheapest.price!)} = ${rupiah(packs * cheapest.price!)} for ${packs * cheapest.units} pcs (needed ${plan!.needed} pcs to reach max_stock)`
+                : "";
+
+            return `Size: ${size}\nCheapest: ${cheapest.supplier} at ${rupiah(cheapest.unitPrice)} per pcs (${rupiah(cheapest.price!)} for ${cheapest.units} pcs${cheapest.assumption ? `, ${cheapest.assumption}` : ""}) - ${cheapest.url}${estimate}\nRanking by price per pcs:\n${ranking}`;
         });
+
+        const orderLine = product ? `\n${describeOrder(product)}` : "";
 
         const note = groups.size > 1
             ? "\n\nNote: offers have different item sizes, so each size is compared separately. Prices are not comparable across sizes."
@@ -406,7 +454,7 @@ server.registerTool(
         return {
             content: [{
                 type: "text" as const,
-                text: `Supplier comparison for ${productName}:\n\n${sections.join("\n\n")}${note}${excludedText}`,
+                text: `Supplier comparison for ${productName}:${orderLine}\n\n${sections.join("\n\n")}${note}${excludedText}`,
             }],
         };
     },

@@ -63,7 +63,7 @@ const toolDeclarations: any[] = [
     {
         name: "get_low_stock",
         description:
-            "Return only products whose current_stock is below safety_threshold. Use this to find which products need restocking before looking up supplier prices.",
+            "Return only products whose current_stock is below safety_threshold, with the suggested order quantity (up to max_stock, rounded up to whole cartons). Use this to find which products need restocking before looking up supplier prices.",
         parameters: {
             type: Type.OBJECT,
             properties: {},
@@ -165,6 +165,7 @@ Rules:
 - When the user asks what products are in inventory or requests a list of all products, call list_inventory.
 - For current supplier price questions, call search_supplier_prices.
   - If the user asks for a restock recommendation, first call get_low_stock to get actual low-stock products.
+- For restock recommendations, report the suggested order quantity exactly as returned by get_low_stock or compare_supplier_offers (cartons, pcs, stock after order, and any note about exceeding max_stock), and the estimated cost from compare_supplier_offers when available. Never calculate order quantities or totals yourself; prices exclude shipping.
 - Only a product with current_stock < safety_threshold (as returned by get_low_stock or check_stock) may be passed to search_supplier_prices. Never call search_supplier_prices for a product that is not below its safety threshold. The tool also blocks such requests; if it returns BLOCKED, report that to the user and do not retry.
 - If the user asks for both stock and price, call both tools.
 - Base stock status only on check_stock results.
