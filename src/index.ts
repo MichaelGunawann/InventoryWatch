@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {tavily} from "@tavily/core";
+import { describeOrder, orderPlan, type StockLevels } from "./order.js";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -33,43 +34,6 @@ const FIXED_PACK_UNITS: Record<string, number> = {
 
 // Pack words whose item count depends on the product; filled from inventory.units_per_carton.
 const CARTON_UNITS = ["dus", "karton", "carton", "ctn"];
-
-type StockLevels = {
-    current_stock: number;
-    max_stock: number | null;
-    units_per_carton: number | null;
-};
-
-// Suggested order: refill up to max_stock, rounded UP to whole cartons when the carton size is known.
-function orderPlan(product: StockLevels) {
-    if (product.max_stock === null) {
-        return null;
-    }
-
-    const needed = Math.max(product.max_stock - product.current_stock, 0);
-    const cartons = product.units_per_carton ? Math.ceil(needed / product.units_per_carton) : null;
-    const orderPcs = cartons !== null ? cartons * product.units_per_carton! : needed;
-    const stockAfter = product.current_stock + orderPcs;
-
-    return { needed, cartons, orderPcs, stockAfter, overMax: stockAfter - product.max_stock };
-}
-
-function describeOrder(product: StockLevels) {
-    const plan = orderPlan(product);
-
-    if (!plan) {
-        return "Suggested order: unknown (max_stock is not set)";
-    }
-
-    const quantity = plan.cartons !== null
-        ? `${plan.cartons} carton(s) x ${product.units_per_carton} = ${plan.orderPcs} pcs`
-        : `${plan.orderPcs} pcs (carton size not set)`;
-    const overMax = plan.overMax > 0
-        ? ` (${plan.overMax} pcs above max_stock because of rounding up to whole cartons)`
-        : "";
-
-    return `Suggested order: ${quantity}, stock after order ${plan.stockAfter} / max ${product.max_stock}${overMax}`;
-}
 
 const server = new McpServer({
     name: "InventoryWatch",
@@ -356,10 +320,10 @@ server.registerTool(
 
         // The store's own carton size for this product, used when a listing says "1 dus" without the count.
         const product = db.prepare(`
-            SELECT current_stock, max_stock, units_per_carton
+            SELECT sku, current_stock, max_stock, units_per_carton
             FROM inventory
             WHERE sku = ? OR item_name = ? COLLATE NOCASE
-        `).get(productName, productName) as StockLevels | undefined;
+        `).get(productName, productName) as (StockLevels & { sku: string }) | undefined;
         const unitsPerCarton = product?.units_per_carton ?? null;
         const plan = product ? orderPlan(product) : null;
 
@@ -447,6 +411,17 @@ server.registerTool(
 
         const orderLine = product ? `\n${describeOrder(product)}` : "";
 
+        // Every comparable offer as data, so the GUI can list them in the draft order without re-reading Gemini's text.
+        const offerData = valid.map((offer) => ({
+            size: sizeKey(offer.unitSize),
+            supplier: offer.supplier,
+            url: offer.url,
+            price: offer.price!,
+            unitsPerPack: offer.units,
+            unitPrice: offer.unitPrice,
+            assumption: offer.assumption,
+        }));
+
         const note = groups.size > 1
             ? "\n\nNote: offers have different item sizes, so each size is compared separately. Prices are not comparable across sizes."
             : "";
@@ -456,6 +431,7 @@ server.registerTool(
                 type: "text" as const,
                 text: `Supplier comparison for ${productName}:${orderLine}\n\n${sections.join("\n\n")}${note}${excludedText}`,
             }],
+            structuredContent: { sku: product?.sku ?? null, offers: offerData },
         };
     },
 );

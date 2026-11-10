@@ -6,7 +6,8 @@
   "scripts": {
     "agent": "tsx src/agent.ts",
     "server": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "web": "tsx src/web.ts"
   },
   "keywords": [],
   "author": "",

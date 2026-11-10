@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InventoryWatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script>
+  // Apply the saved theme before the page paints; dark is the default.
+  try { document.documentElement.dataset.theme = localStorage.getItem("iw-theme") || "dark"; } catch {}
+</script>
+<style>
+  :root {
+    --bg: #F6F4EF; --surface: #FFFFFF; --surface-2: #FBFAF7; --border: #E3E0D8;
+    --text: #1F2421; --muted: #6B706C;
+    --primary: #22CE83; --primary-hover: #1DB874; --on-primary: #072E1C;
+    --low: #FF8000; --low-bg: #FFF0E0;
+    --danger: #FF2800; --danger-bg: #FFE6E0;
+    --ok: #22CE83; --ok-bg: #E2F8EE;
+    --note: #B7791F; --note-bg: #FBF3DC;
+    --link: #1D5FA8;
+    --shadow: 0 1px 2px rgba(31, 36, 33, .06), 0 2px 8px rgba(31, 36, 33, .04);
+    --radius: 10px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151816; --surface: #1E2320; --surface-2: #191D1B; --border: #2E3430;
+      --text: #ECEDEA; --muted: #9BA19C;
+      --primary: #22CE83; --primary-hover: #4DDA9C; --on-primary: #072E1C;
+      --low: #FF8000; --low-bg: #3A2410;
+      --danger: #FF2800; --danger-bg: #3D1410;
+      --ok: #22CE83; --ok-bg: #12301F;
+      --note: #F6C760; --note-bg: #352B12;
+      --link: #7DB4F0;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151816; --surface: #1E2320; --surface-2: #191D1B; --border: #2E3430;
+    --text: #ECEDEA; --muted: #9BA19C;
+    --primary: #22CE83; --primary-hover: #4DDA9C; --on-primary: #072E1C;
+    --low: #FF8000; --low-bg: #3A2410;
+    --danger: #FF2800; --danger-bg: #3D1410;
+    --ok: #22CE83; --ok-bg: #12301F;
+    --note: #F6C760; --note-bg: #352B12;
+    --link: #7DB4F0;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.55 Inter, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    display: flex; flex-direction: column;
+  }
+  button { font: inherit; cursor: pointer; }
+  a { color: var(--link); }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+  }
+  .brand h1 { font-size: 16px; margin: 0; line-height: 1.2; }
+  .brand p { font-size: 12px; margin: 0; color: var(--muted); }
+  .spacer { flex: 1; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .status.busy .dot { background: var(--note); animation: pulse 1s infinite; }
+  .status.error .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .icon-btn {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    border-radius: 8px; padding: 6px 10px; font-size: 13px;
+  }
+  .icon-btn:hover { border-color: var(--primary); }
+
+  /* Layout */
+  .tabs { display: none; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 370px; }
+  .chat { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+  .messages { flex: 1; overflow-y: auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 18px; }
+  .messages > * { max-width: 820px; width: 100%; margin: 0 auto; }
+
+  /* Messages */
+  .msg-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .user .bubble {
+    background: var(--primary); color: var(--on-primary);
+    padding: 10px 14px; border-radius: var(--radius); display: inline-block; max-width: 85%;
+  }
+  .user { text-align: right; }
+  .agent .bubble { background: transparent; }
+  .agent .bubble > :first-child { margin-top: 0; }
+  .agent .bubble h2 { font-size: 17px; }
+  .agent .bubble h3 { font-size: 15px; margin: 0 0 8px; }
+  .agent .bubble hr { display: none; }
+  .agent .bubble ul { padding-left: 20px; margin: 6px 0; }
+  .agent .bubble a { overflow-wrap: anywhere; }
+  .agent .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+  .agent .bubble th, .agent .bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  .plan-card {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--primary);
+    border-radius: var(--radius); padding: 14px 16px; margin: 12px 0; box-shadow: var(--shadow);
+  }
+  .note-line {
+    background: var(--note-bg); color: var(--note); border-radius: 6px;
+    padding: 4px 8px; list-style: none; margin: 4px 0 4px -20px;
+  }
+  .note-line > p { margin: 0; }
+  .error .bubble {
+    background: var(--danger-bg); color: var(--danger); padding: 10px 14px; border-radius: var(--radius);
+  }
+
+  /* Agent steps */
+  .steps {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+    margin-bottom: 10px; font-size: 13px;
+  }
+  .steps summary { padding: 8px 12px; cursor: pointer; color: var(--muted); font-weight: 500; }
+  .steps ol { margin: 0; padding: 0 12px 10px 34px; }
+  .steps li { padding: 2px 0; }
+  .steps code { font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--text); }
+  .steps .arg { color: var(--muted); }
+  .steps .fail { color: var(--danger); }
+  .thinking { color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .thinking .dot { background: var(--note); animation: pulse 1s infinite; }
+
+  /* Empty state */
+  .empty { margin: auto; text-align: center; color: var(--muted); max-width: 460px; }
+  .empty h2 { color: var(--text); font-size: 20px; margin-bottom: 6px; }
+
+  /* Composer */
+  .composer { padding: 14px 20px 18px; border-top: 1px solid var(--border); background: var(--surface); }
+  .composer form { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; }
+  .composer textarea {
+    flex: 1; resize: none; min-height: 44px; max-height: 160px; overflow-y: hidden;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 11px 14px; font: inherit;
+  }
+  .composer textarea:focus, .search:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  .send {
+    background: var(--primary); color: var(--on-primary); border: 0; border-radius: var(--radius);
+    padding: 0 20px; font-weight: 600;
+  }
+  .send:hover { background: var(--primary-hover); }
+  .send:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* Inventory panel */
+  aside { display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+  .panel-head { padding: 16px 16px 10px; display: flex; align-items: center; justify-content: space-between; }
+  .panel-head h2 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .badge.low { background: var(--low-bg); color: var(--low); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .search {
+    margin: 0 16px 10px; padding: 9px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit;
+  }
+  .products { flex: 1; overflow-y: auto; padding: 0 8px; }
+  .product {
+    display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text);
+    padding: 10px 8px; border-radius: 8px;
+  }
+  .product:hover { background: var(--surface-2); }
+  .product-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .product-name { font-weight: 500; }
+  .product-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .bar { position: relative; height: 6px; border-radius: 3px; background: var(--border); margin-top: 6px; }
+  .bar-fill { height: 100%; border-radius: 3px; background: var(--ok); }
+  .product.is-low .bar-fill { background: var(--low); }
+  .bar-mark { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--muted); }
+  .subtabs { display: flex; gap: 4px; padding: 12px 12px 0; border-bottom: 1px solid var(--border); }
+  .subtabs button {
+    flex: 1; background: none; border: 0; border-bottom: 2px solid transparent;
+    padding: 8px 6px 10px; color: var(--muted); font-size: 14px; font-weight: 500;
+  }
+  .subtabs button.active { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+  .subtabs .count {
+    display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; border-radius: 999px;
+    background: var(--low-bg); color: var(--low); font-size: 12px; font-weight: 600;
+  }
+  .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .view[hidden] { display: none; }
+
+  /* Draft order */
+  .draft-toolbar { padding: 12px 12px 0; }
+  .add-panel {
+    margin-top: 8px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface-2); padding: 8px;
+  }
+  .add-panel .search { margin: 0 0 6px; width: 100%; }
+  .add-list { max-height: 220px; overflow-y: auto; }
+  .add-option {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%;
+    background: none; border: 0; color: var(--text); text-align: left; padding: 8px; border-radius: 6px;
+  }
+  .add-option:hover { background: var(--surface); }
+  .add-option small { color: var(--muted); display: block; }
+  .draft-list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .draft-item {
+    border: 1px solid var(--border); border-left: 3px solid var(--low); border-radius: var(--radius);
+    padding: 12px; background: var(--surface-2); font-size: 13.5px;
+  }
+  .draft-item.priced { border-left-color: var(--primary); }
+  .draft-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+  .draft-head > div { flex: 1; min-width: 0; }
+  .draft-head strong { font-size: 14.5px; display: block; }
+  .draft-head small { color: var(--muted); font-size: 12px; }
+  .x-btn {
+    flex-shrink: 0; width: 28px; height: 28px; border-radius: 6px; border: 1px solid transparent;
+    background: none; color: var(--muted); font-size: 15px; line-height: 1;
+  }
+  .x-btn:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-bg); }
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--muted); margin-left: 4px;
+  }
+  .tag.manual { color: var(--link); border-color: currentColor; }
+  .tag.out { color: var(--low); border-color: currentColor; }
+  .draft-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 2px 0; }
+  .draft-row > span:first-child { color: var(--muted); flex-shrink: 0; }
+  .draft-row > :last-child { text-align: right; }
+  .draft-row a { color: var(--link); overflow-wrap: anywhere; }
+  .qty { display: inline-flex; align-items: center; gap: 6px; }
+  .qty button {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-weight: 700;
+  }
+  .qty button:hover:not(:disabled) { border-color: var(--primary); }
+  .qty button:disabled { opacity: .4; cursor: not-allowed; }
+  .qty b { min-width: 52px; text-align: center; }
+  .link-btn { background: none; border: 0; padding: 0; color: var(--link); font-size: 12.5px; text-decoration: underline; }
+  .draft-note, .draft-warn {
+    margin-top: 6px; padding: 4px 8px; border-radius: 6px; font-size: 12.5px;
+  }
+  .draft-note { background: var(--note-bg); color: var(--note); }
+  .draft-warn { background: var(--low-bg); color: var(--low); }
+  .draft-muted { margin-top: 4px; color: var(--muted); font-size: 12.5px; }
+  .draft-missing { margin-top: 6px; color: var(--muted); font-style: italic; }
+  .draft-cost { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); font-weight: 600; }
+  .draft-card-actions { margin-top: 8px; display: flex; }
+  .btn.small { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; }
+  .draft-foot { padding: 12px 16px; border-top: 1px solid var(--border); }
+  .draft-total { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 16px; }
+  .draft-sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 10px; }
+  .draft-actions { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; border-radius: 8px; padding: 9px 10px; font-size: 14px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  }
+  .btn:hover:not(:disabled) { border-color: var(--primary); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .draft-empty { margin: auto; padding: 24px; text-align: center; color: var(--muted); }
+
+  /* Supplier picker */
+  dialog {
+    width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .5); }
+  .dlg { display: flex; flex-direction: column; max-height: calc(100vh - 50px); }
+  .dlg-head { display: flex; align-items: flex-start; gap: 8px; padding: 16px 16px 10px; }
+  .dlg-head > div { flex: 1; }
+  .dlg-head h2 { font-size: 17px; margin: 0; }
+  .dlg-head p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .dlg .search { margin: 0 16px 8px; }
+  .sd-list { overflow-y: auto; padding: 0 16px; flex: 1; min-height: 80px; }
+  .sd-option {
+    display: flex; gap: 10px; align-items: flex-start; padding: 10px; margin-bottom: 6px;
+    border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; font-size: 13.5px;
+  }
+  .sd-option:hover { border-color: var(--primary); }
+  .sd-option.selected { border-color: var(--primary); background: var(--ok-bg); }
+  .sd-option input { margin-top: 3px; accent-color: var(--primary); }
+  .sd-option .sd-main { flex: 1; min-width: 0; }
+  .sd-option .sd-top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .sd-option .sd-meta { color: var(--muted); font-size: 12.5px; }
+  .sd-option a { color: var(--link); font-size: 12.5px; }
+  .sd-empty { color: var(--muted); padding: 12px 0; font-size: 13.5px; }
+  .sd-tools { display: flex; gap: 8px; padding: 8px 16px; flex-wrap: wrap; }
+  .sd-tools .btn { flex: 1 1 200px; font-size: 13px; }
+  .sd-manual { margin: 0 16px; padding: 12px; border: 1px solid var(--primary); border-radius: var(--radius); display: grid; gap: 8px; }
+  .sd-manual[hidden], .sd-tools .btn[hidden] { display: none; }
+  .sd-manual label { display: grid; gap: 3px; font-size: 12.5px; color: var(--muted); }
+  .sd-manual input {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font: inherit;
+  }
+  .sd-manual .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .sd-manual input { min-width: 0; width: 100%; }
+  .form-error { color: var(--danger); font-size: 13px; margin: 6px 16px 0; min-height: 1em; }
+  .dlg-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 16px 16px; }
+  .dlg-foot .btn { flex: 0 0 auto; padding: 9px 18px; }
+
+  /* Undo toast */
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10;
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-radius: 10px;
+    background: var(--text); color: var(--bg); font-size: 14px; box-shadow: var(--shadow);
+    max-width: calc(100vw - 32px);
+  }
+  .toast[hidden] { display: none; }
+  .toast button { background: none; border: 0; color: var(--primary); font-weight: 700; }
+
+  .quick { padding: 12px 16px 16px; border-top: 1px solid var(--border); }
+  .quick h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .chip {
+    display: block; width: 100%; text-align: left; margin-bottom: 6px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px;
+  }
+  .chip:hover { border-color: var(--primary); color: var(--primary); }
+
+  /* Phone: inventory becomes a tab */
+  @media (max-width: 860px) {
+    header { padding: 10px 16px; }
+    .brand p { display: none; }
+    .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); }
+    .tabs button {
+      flex: 1; background: none; border: 0; padding: 10px; color: var(--muted);
+      border-bottom: 2px solid transparent;
+    }
+    .tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+    main { grid-template-columns: 1fr; }
+    .chat { border-right: 0; }
+    main[data-tab="chat"] aside, main[data-tab="inventory"] .chat { display: none; }
+    /* Give the draft list the full height on phones. */
+    aside:has(#view-draft:not([hidden])) .quick { display: none; }
+    .messages { padding: 18px 16px; }
+    .composer { padding: 12px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>InventoryWatch</h1>
+    <p>Agen restock supermarket</p>
+  </div>
+  <div class="spacer"></div>
+  <div class="status" id="status"><span class="dot"></span><span id="status-text">Siap</span></div>
+  <button class="icon-btn" id="theme-btn" type="button">☀ Terang</button>
+</header>
+
+<nav class="tabs">
+  <button type="button" class="active" data-tab="chat">Chat</button>
+  <button type="button" data-tab="inventory">Stok &amp; Draf</button>
+</nav>
+
+<main data-tab="chat">
+  <section class="chat">
+    <div class="messages" id="messages">
+      <div class="empty" id="empty">
+        <h2>Halo, mau cek apa hari ini?</h2>
+        <p>Tanyakan stok produk, produk mana yang perlu di-restock, atau supplier termurah untuk produk yang stoknya rendah.</p>
+      </div>
+    </div>
+    <div class="composer">
+      <form id="form">
+        <textarea id="input" rows="1" placeholder="Tanya stok atau restock…"></textarea>
+        <button class="send" id="send" type="submit">Kirim</button>
+      </form>
+    </div>
+  </section>
+
+  <aside>
+    <div class="subtabs" role="tablist">
+      <button type="button" class="active" data-view="inventory">Inventaris</button>
+      <button type="button" data-view="draft">Draf Pesanan <span class="count" id="draft-count" hidden></span></button>
+    </div>
+
+    <div class="view" id="view-inventory">
+      <div class="panel-head">
+        <h2>Stok produk</h2>
+        <span class="badge low" id="low-count" hidden></span>
+      </div>
+      <input class="search" id="search" type="search" placeholder="Cari produk…" aria-label="Cari produk">
+      <div class="products" id="products"></div>
+    </div>
+
+    <div class="view" id="view-draft" hidden>
+      <div class="draft-toolbar">
+        <button class="btn small" type="button" id="add-toggle">+ Tambah produk</button>
+        <div class="add-panel" id="add-panel" hidden>
+          <input class="search" id="add-search" type="search" placeholder="Cari produk untuk ditambahkan…" aria-label="Cari produk">
+          <div class="add-list" id="add-list"></div>
+        </div>
+      </div>
+      <div class="draft-list" id="draft-list"></div>
+      <div class="draft-foot">
+        <div class="draft-total"><span>Total perkiraan</span><span id="draft-total">Rp0</span></div>
+        <div class="draft-sub" id="draft-sub"></div>
+        <div class="draft-actions">
+          <button class="btn primary" type="button" id="draft-price">Cari harga supplier</button>
+          <button class="btn" type="button" id="draft-copy">Salin draf</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="quick">
+      <h3>Pertanyaan cepat</h3>
+      <button class="chip" type="button" data-prompt="Produk apa saja yang stoknya di bawah safety stock?">Cek stok rendah</button>
+      <button class="chip" type="button" data-prompt="Produk apa saja yang perlu di-restock, berapa yang harus dipesan, dan dari supplier termurah mana?">Rekomendasi restock</button>
+      <button class="chip" type="button" data-prompt="Tampilkan semua produk di inventaris.">Lihat semua produk</button>
+    </div>
+  </aside>
+</main>
+
+<dialog id="sd">
+  <form method="dialog" class="dlg" id="sd-form">
+    <div class="dlg-head">
+      <div>
+        <h2 id="sd-title">Pilih supplier</h2>
+        <p id="sd-sub"></p>
+      </div>
+      <button class="x-btn" value="cancel" formnovalidate aria-label="Tutup">✕</button>
+    </div>
+    <input class="search" id="sd-search" type="search" placeholder="Cari nama supplier…" aria-label="Cari nama supplier">
+    <div class="sd-list" id="sd-list"></div>
+    <div class="sd-tools">
+      <button class="btn" type="button" id="sd-research">↻ Cari ulang harga produk ini</button>
+      <button class="btn" type="button" id="sd-manual-toggle">+ Supplier lain (isi manual)</button>
+    </div>
+    <div class="sd-manual" id="sd-manual" hidden>
+      <label>Nama supplier<input id="m-name" maxlength="100" placeholder="mis. Toko Grosir Sinar Jaya"></label>
+      <div class="two">
+        <label>Harga per pack (Rp)<input id="m-price" type="number" min="1" step="1" placeholder="150000"></label>
+        <label>Isi per pack (pcs)<input id="m-units" type="number" min="1" step="1" placeholder="40"></label>
+      </div>
+      <label>Link (opsional)<input id="m-url" type="url" placeholder="https://…"></label>
+    </div>
+    <p class="form-error" id="sd-error"></p>
+    <div class="dlg-foot">
+      <button class="btn" value="cancel" formnovalidate>Batal</button>
+      <button class="btn primary" type="button" id="sd-apply">Pakai</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="toast-undo">Batalkan</button></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const messages = $("messages");
+const input = $("input");
+const sendBtn = $("send");
+let products = [];
+let busy = false;
+
+/* ---------- Theme ---------- */
+function renderThemeButton() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("theme-btn").textContent = dark ? "☀ Terang" : "☾ Gelap";
+}
+$("theme-btn").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("iw-theme", next); } catch {}
+  renderThemeButton();
+});
+renderThemeButton();
+
+/* ---------- Mobile tabs ---------- */
+document.querySelectorAll(".tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelector("main").dataset.tab = btn.dataset.tab;
+    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === btn));
+  });
+});
+
+/* ---------- Status ---------- */
+function setStatus(state, text) {
+  $("status").className = "status " + state;
+  $("status-text").textContent = text;
+}
+
+/* ---------- Inventory panel ---------- */
+async function loadInventory() {
+  try {
+    const res = await fetch("/api/inventory");
+    products = (await res.json()).products;
+    renderInventory();
+  } catch {
+    $("products").innerHTML = '<p style="padding:8px;color:var(--muted)">Gagal memuat inventaris.</p>';
+  }
+}
+
+function renderInventory() {
+  const query = $("search").value.trim().toLowerCase();
+  const low = products.filter((p) => p.current_stock < p.safety_threshold);
+  const lowCount = $("low-count");
+  lowCount.hidden = false;
+  lowCount.className = "badge " + (low.length ? "low" : "ok");
+  lowCount.textContent = low.length ? `${low.length} stok rendah` : "Semua aman";
+
+  const list = products
+    .filter((p) => !query || p.item_name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query))
+    // Low-stock products first, so they are the first thing seen.
+    .sort((a, b) => (a.current_stock < a.safety_threshold ? 0 : 1) - (b.current_stock < b.safety_threshold ? 0 : 1));
+
+  $("products").replaceChildren(...list.map((p) => {
+    const isLow = p.current_stock < p.safety_threshold;
+    const scale = Math.max(p.max_stock || 0, p.current_stock, p.safety_threshold) || 1;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "product" + (isLow ? " is-low" : "");
+    btn.title = `Tanya agent tentang ${p.item_name}`;
+    btn.innerHTML = `
+      <div class="product-top">
+        <span class="product-name"></span>
+        <span class="badge ${isLow ? "low" : "ok"}">${isLow ? "Rendah" : "Aman"}</span>
+      </div>
+      <div class="bar">
+        <div class="bar-fill" style="width:${Math.min(p.current_stock / scale, 1) * 100}%"></div>
+        <div class="bar-mark" style="left:${Math.min(p.safety_threshold / scale, 1) * 100}%" title="Safety threshold"></div>
+      </div>
+      <div class="product-meta">
+        <span>${p.sku} · stok ${p.current_stock} / min ${p.safety_threshold}</span>
+        <span>${p.max_stock ? "maks " + p.max_stock : ""}</span>
+      </div>`;
+    btn.querySelector(".product-name").textContent = p.item_name;
+    btn.addEventListener("click", () => {
+      input.value = isLow
+        ? `Berapa yang harus dipesan untuk ${p.item_name} dan dari supplier termurah mana?`
+        : `Cek stok ${p.item_name}.`;
+      document.querySelector('.tabs button[data-tab="chat"]').click();
+      input.focus();
+      autoGrow();
+    });
+    return btn;
+  }));
+}
+$("search").addEventListener("input", renderInventory);
+
+/* ---------- Side panel views ---------- */
+function showView(view) {
+  document.querySelectorAll(".subtabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  $("view-inventory").hidden = view !== "inventory";
+  $("view-draft").hidden = view !== "draft";
+}
+document.querySelectorAll(".subtabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+
+/* ---------- Draft order ---------- */
+const RESTOCK_PROMPT = "Produk apa saja yang perlu di-restock, berapa yang harus dipesan, dan dari supplier termurah mana?";
+const rupiah = (v) => "Rp" + Math.round(v).toLocaleString("id-ID");
+let draft = { items: [], total: 0, unpriced: 0 };
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function row(label, value) {
+  const r = el("div", "draft-row");
+  r.append(el("span", "", label), typeof value === "string" ? el("span", "", value) : value);
+  return r;
+}
+
+// Only open web links; anything else (e.g. "javascript:") is shown as plain text.
+function link(text, url) {
+  if (!url || !/^https?:\/\//i.test(url)) return el("span", "", text);
+  const a = el("a", "", text);
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function sizeLabel(size) {
+  return !size || size === "size not stated" ? "ukuran tidak disebut" : size;
+}
+
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Permintaan gagal.");
+  return data;
+}
+
+async function loadDraft() {
+  try {
+    draft = await api("GET", "/api/draft-order");
+    renderDraft();
+  } catch {}
+}
+
+// Every edit returns the whole draft, so the list is redrawn from the server's numbers.
+async function editDraft(method, url, body) {
+  try {
+    draft = await api(method, url, body);
+    renderDraft();
+    return true;
+  } catch (error) {
+    alert(error.message);
+    return false;
+  }
+}
+
+function renderDraft() {
+  const count = $("draft-count");
+  count.hidden = draft.items.length === 0;
+  count.textContent = draft.items.length;
+
+  const list = $("draft-list");
+  if (draft.items.length === 0) {
+    list.replaceChildren(el("div", "draft-empty", "Draf kosong. Produk di bawah safety stock akan masuk otomatis, atau tambah produk sendiri."));
+  } else {
+    list.replaceChildren(...draft.items.map(renderItem));
+  }
+
+  $("draft-total").textContent = rupiah(draft.total);
+  $("draft-sub").textContent = draft.items.length === 0
+    ? ""
+    : draft.unpriced > 0
+      ? `${draft.unpriced} dari ${draft.items.length} produk belum ada supplier. Belum termasuk ongkir.`
+      : "Belum termasuk ongkir dan minimum order.";
+  $("draft-copy").disabled = draft.items.length === 0;
+  if (!$("add-panel").hidden) renderAddList();
+}
+
+function renderItem(item) {
+  const card = el("div", "draft-item" + (item.purchase ? " priced" : ""));
+  const itemUrl = `/api/draft-order/items/${item.sku}`;
+
+  // Header with the remove (✕) button
+  const head = el("div", "draft-head");
+  const title = el("div");
+  const name = el("strong", "", item.item_name);
+  if (!item.isLow) name.append(el("span", "tag out", "Di luar stok rendah"));
+  title.append(name, el("small", "", `${item.sku} · stok ${item.current_stock} / min ${item.safety_threshold}`));
+  const x = el("button", "x-btn", "✕");
+  x.type = "button";
+  x.title = "Hapus dari draf";
+  x.setAttribute("aria-label", `Hapus ${item.item_name} dari draf`);
+  x.addEventListener("click", async () => {
+    if (await editDraft("DELETE", itemUrl)) showUndo(item);
+  });
+  head.append(title, x);
+  card.append(head);
+
+  // Quantity stepper, in cartons (dus)
+  const qty = el("span", "qty");
+  const minus = el("button", "", "−");
+  const plus = el("button", "", "+");
+  minus.type = plus.type = "button";
+  minus.setAttribute("aria-label", "Kurangi");
+  plus.setAttribute("aria-label", "Tambah");
+  minus.disabled = item.quantity <= 1;
+  minus.addEventListener("click", () => editDraft("PATCH", itemUrl, { quantity: item.quantity - 1 }));
+  plus.addEventListener("click", () => editDraft("PATCH", itemUrl, { quantity: item.quantity + 1 }));
+  qty.append(minus, el("b", "", `${item.quantity} ${item.unit}`), plus);
+  card.append(row("Pesan", qty));
+  card.append(row("", item.unit === "dus" ? `${item.quantity} × ${item.perUnit} = ${item.orderPcs} pcs` : `${item.orderPcs} pcs`));
+  if (item.suggested && item.quantity !== item.suggested) {
+    const reset = el("button", "link-btn", `Kembalikan ke saran (${item.suggested} ${item.unit})`);
+    reset.type = "button";
+    reset.addEventListener("click", () => editDraft("PATCH", itemUrl, { quantity: null }));
+    card.append(row("", reset));
+  }
+  card.append(row("Stok setelah datang", item.max_stock ? `${item.stockAfter} / maks ${item.max_stock}` : `${item.stockAfter}`));
+  if (item.stillLow) card.append(el("div", "draft-warn", `Stok masih di bawah batas minimum (${item.safety_threshold}).`));
+  if (item.overMax > 0) card.append(el("div", "draft-note", `Lebih ${item.overMax} pcs dari maks.`));
+
+  // Supplier
+  const s = item.supplier;
+  const p = item.purchase;
+  if (s && p) {
+    const who = el("span");
+    who.append(link(s.name, s.url));
+    who.append(el("span", "tag" + (s.source === "manual" ? " manual" : ""),
+      s.source === "manual" ? "Manual" : s.autoPicked ? "Termurah" : "Dipilih"));
+    card.append(row("Supplier", who));
+    card.append(row("Harga", `${rupiah(p.unitPrice)}/pcs · ${s.unitsPerPack} pcs/pack${s.source === "search" ? " · " + sizeLabel(s.size) : ""}`));
+    card.append(row("Beli", `${p.packs} pack × ${rupiah(s.price)} = ${p.pcs} pcs`));
+    if (p.pcs !== item.orderPcs) card.append(el("div", "draft-muted", `Supplier menjual ${s.unitsPerPack} pcs per pack, jadi yang dibeli ${p.pcs} pcs.`));
+    if (s.assumption) card.append(el("div", "draft-note", `Isi per pack diasumsikan ${s.unitsPerPack} pcs dari data toko.`));
+    if (p.cheaperUnitPrice) card.append(el("div", "draft-note", `Ada yang lebih murah di hasil pencarian: ${rupiah(p.cheaperUnitPrice)}/pcs.`));
+    const cost = row("Perkiraan", rupiah(p.cost));
+    cost.classList.add("draft-cost");
+    card.append(cost);
+  } else {
+    card.append(el("div", "draft-missing", item.isLow ? "Belum ada supplier. Cari harga atau isi manual." : "Belum ada supplier. Isi supplier manual."));
+  }
+
+  const actions = el("div", "draft-card-actions");
+  const change = el("button", "btn small", s ? "Ganti supplier" : "Pilih supplier");
+  change.type = "button";
+  change.addEventListener("click", () => openSupplierPicker(item));
+  actions.append(change);
+  card.append(actions);
+  return card;
+}
+
+/* Undo after removing */
+let undoTimer;
+function showUndo(item) {
+  $("toast-text").textContent = `${item.item_name} dihapus dari draf`;
+  $("toast").hidden = false;
+  $("toast-undo").onclick = async () => {
+    $("toast").hidden = true;
+    await editDraft("PATCH", `/api/draft-order/items/${item.sku}`, { removed: false });
+  };
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { $("toast").hidden = true; }, 6000);
+}
+
+/* Add a product */
+let addProducts = [];
+$("add-toggle").addEventListener("click", async () => {
+  const panel = $("add-panel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) {
+    $("add-search").value = "";
+    await renderAddList();
+    $("add-search").focus();
+  }
+});
+$("add-search").addEventListener("input", () => renderAddList(false));
+
+async function renderAddList(refresh = true) {
+  if (refresh) {
+    try { addProducts = (await api("GET", "/api/draft-order/products")).products; } catch { addProducts = []; }
+  }
+  const query = $("add-search").value.trim().toLowerCase();
+  const options = addProducts
+    .filter((p) => p.not_in_draft)
+    .filter((p) => !query || p.item_name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query));
+  if (options.length === 0) {
+    $("add-list").replaceChildren(el("div", "sd-empty", "Semua produk yang cocok sudah ada di draf."));
+    return;
+  }
+  $("add-list").replaceChildren(...options.map((p) => {
+    const isLow = p.current_stock < p.safety_threshold;
+    const btn = el("button", "add-option");
+    btn.type = "button";
+    const text = el("span", "", p.item_name);
+    text.append(el("small", "", `${p.sku} · stok ${p.current_stock} / min ${p.safety_threshold}`));
+    btn.append(text, el("span", "badge " + (isLow ? "low" : "ok"), isLow ? "Rendah" : "Aman"));
+    btn.addEventListener("click", async () => {
+      if (await editDraft("POST", "/api/draft-order/items", { sku: p.sku })) $("add-panel").hidden = true;
+    });
+    return btn;
+  }));
+}
+
+/* Supplier picker */
+const sd = $("sd");
+let sdItem = null;
+let sdOffers = [];
+let sdChoice = null; // { type: "auto" } | { type: "offer", id } | { type: "manual" }
+
+async function openSupplierPicker(item) {
+  sdItem = item;
+  sdChoice = null;
+  $("sd-title").textContent = `Pilih supplier · ${item.item_name}`;
+  $("sd-sub").textContent = "Memuat penawaran…";
+  $("sd-search").value = "";
+  $("sd-error").textContent = "";
+  $("sd-manual").hidden = true;
+  $("sd-research").hidden = !item.isLow;
+  for (const id of ["m-name", "m-price", "m-units", "m-url"]) $(id).value = "";
+  if (item.supplier?.source === "manual") {
+    $("m-name").value = item.supplier.name;
+    $("m-price").value = item.supplier.price;
+    $("m-units").value = item.supplier.unitsPerPack;
+    $("m-url").value = item.supplier.url || "";
+  }
+  sd.showModal();
+
+  try { sdOffers = (await api("GET", `/api/draft-order/items/${item.sku}/offers`)).offers; } catch { sdOffers = []; }
+  const when = sdOffers[0]?.comparedAt ? new Date(sdOffers[0].comparedAt.replace(" ", "T") + "Z").toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : null;
+  $("sd-sub").textContent = sdOffers.length
+    ? `${sdOffers.length} penawaran dari pencarian terakhir (${when}). Diurutkan dari harga per pcs termurah.`
+    : item.isLow
+      ? "Belum ada hasil pencarian untuk produk ini. Cari ulang harga, atau isi supplier manual."
+      : "Stok produk ini aman, jadi agent tidak mencari harganya. Isi supplier manual.";
+  // Start with what the card currently uses.
+  if (item.supplier?.source === "manual") {
+    sdChoice = { type: "manual" };
+    $("sd-manual").hidden = false;
+  } else if (item.supplier && item.supplier.autoPicked) {
+    sdChoice = { type: "auto" };
+  } else if (item.supplier) {
+    const current = sdOffers.find((o) => o.supplier === item.supplier.name && o.url === item.supplier.url && o.price === item.supplier.price);
+    sdChoice = current ? { type: "offer", id: current.id } : null;
+  }
+  renderOffers();
+}
+
+function renderOffers() {
+  const query = $("sd-search").value.trim().toLowerCase();
+  const list = $("sd-list");
+  const nodes = [];
+
+  if (sdOffers.length && !query) {
+    nodes.push(offerOption({ type: "auto" }, "Otomatis: selalu termurah", "Ikut supplier termurah setiap kali harga dicari ulang.", null, null));
+  }
+  const shown = sdOffers.filter((o) => !query || o.supplier.toLowerCase().includes(query));
+  for (const o of shown) {
+    const meta = `${rupiah(o.price)} / ${o.unitsPerPack} pcs · ${sizeLabel(o.size)}` + (o.assumption ? " · isi diasumsikan dari data toko" : "");
+    nodes.push(offerOption({ type: "offer", id: o.id }, o.supplier, meta, `${rupiah(o.unitPrice)}/pcs`, o.url));
+  }
+  if (sdOffers.length && shown.length === 0) nodes.push(el("div", "sd-empty", `Tidak ada supplier dengan nama "${$("sd-search").value}".`));
+  if (!sdOffers.length) nodes.push(el("div", "sd-empty", "Belum ada penawaran tersimpan."));
+  list.replaceChildren(...nodes);
+}
+
+function offerOption(choice, title, meta, price, url) {
+  const selected = sdChoice && sdChoice.type === choice.type && sdChoice.id === choice.id;
+  const label = el("label", "sd-option" + (selected ? " selected" : ""));
+  const radio = el("input");
+  radio.type = "radio";
+  radio.name = "sd-choice";
+  radio.checked = Boolean(selected);
+  radio.addEventListener("change", () => {
+    sdChoice = choice;
+    $("sd-manual").hidden = true;
+    renderOffers();
+  });
+  const main = el("div", "sd-main");
+  const top = el("div", "sd-top");
+  top.append(el("span", "", title), price ? el("span", "", price) : el("span"));
+  main.append(top, el("div", "sd-meta", meta));
+  if (url) main.append(link("Lihat sumber ↗", url));
+  label.append(radio, main);
+  return label;
+}
+
+$("sd-search").addEventListener("input", renderOffers);
+// Only the close buttons may close the dialog; Enter in a field must not.
+$("sd-form").addEventListener("submit", (e) => {
+  if (e.submitter?.value !== "cancel") e.preventDefault();
+});
+$("sd-manual-toggle").addEventListener("click", () => {
+  sdChoice = { type: "manual" };
+  $("sd-manual").hidden = false;
+  renderOffers();
+  $("m-name").focus();
+});
+$("sd-research").addEventListener("click", () => {
+  const item = sdItem;
+  sd.close();
+  document.querySelector('.tabs button[data-tab="chat"]').click();
+  send(`Cari harga supplier termurah untuk ${item.item_name} (${item.sku}).`);
+});
+$("sd-apply").addEventListener("click", async () => {
+  $("sd-error").textContent = "";
+  if (!sdChoice) {
+    $("sd-error").textContent = "Pilih salah satu supplier dulu.";
+    return;
+  }
+  const url = `/api/draft-order/items/${sdItem.sku}`;
+  const body = sdChoice.type === "auto"
+    ? { offerId: null }
+    : sdChoice.type === "offer"
+      ? { offerId: sdChoice.id }
+      : { manualSupplier: { name: $("m-name").value, price: $("m-price").value, unitsPerPack: $("m-units").value, url: $("m-url").value } };
+  try {
+    draft = await api("PATCH", url, body);
+    renderDraft();
+    sd.close();
+  } catch (error) {
+    $("sd-error").textContent = error.message;
+  }
+});
+
+/* Footer buttons */
+$("draft-price").addEventListener("click", () => {
+  document.querySelector('.tabs button[data-tab="chat"]').click();
+  send(RESTOCK_PROMPT);
+});
+
+$("draft-copy").addEventListener("click", async () => {
+  const lines = ["DRAF PESANAN RESTOCK - InventoryWatch", new Date().toLocaleString("id-ID"), ""];
+  draft.items.forEach((item, i) => {
+    lines.push(`${i + 1}. ${item.item_name} (${item.sku})`);
+    lines.push(`   Pesan: ${item.unit === "dus" ? `${item.quantity} dus x ${item.perUnit} = ` : ""}${item.orderPcs} pcs`);
+    if (item.purchase) {
+      const s = item.supplier;
+      lines.push(`   Supplier: ${s.name}${s.url ? " - " + s.url : ""}${s.source === "manual" ? " (manual)" : ""}`);
+      lines.push(`   Beli: ${item.purchase.packs} pack x ${rupiah(s.price)} = ${rupiah(item.purchase.cost)}`);
+    } else {
+      lines.push("   Supplier: belum dipilih");
+    }
+  });
+  lines.push("", `Total perkiraan: ${rupiah(draft.total)} (belum termasuk ongkir)`);
+  const btn = $("draft-copy");
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    btn.textContent = "Tersalin ✓";
+  } catch {
+    btn.textContent = "Gagal menyalin";
+  }
+  setTimeout(() => { btn.textContent = "Salin draf"; }, 1500);
+});
+
+/* ---------- Chat ---------- */
+function addMessage(role, label) {
+  $("empty")?.remove();
+  const wrap = document.createElement("div");
+  wrap.className = role;
+  wrap.innerHTML = `<div class="msg-label"></div><div class="bubble"></div>`;
+  wrap.querySelector(".msg-label").textContent = label;
+  messages.appendChild(wrap);
+  messages.scrollTop = messages.scrollHeight;
+  return wrap;
+}
+
+function renderSteps(steps) {
+  if (!steps?.length) return null;
+  const details = document.createElement("details");
+  details.className = "steps";
+  const summary = document.createElement("summary");
+  summary.textContent = `Langkah agent · ${steps.length} pemanggilan tool MCP`;
+  const list = document.createElement("ol");
+  for (const step of steps) {
+    const li = document.createElement("li");
+    const name = document.createElement("code");
+    name.textContent = step.name;
+    li.append(step.isError ? "✕ " : "✓ ", name);
+    const target = step.args.productName || step.args.productId;
+    if (target) {
+      const arg = document.createElement("span");
+      arg.className = "arg";
+      arg.textContent = ` · ${target}`;
+      li.append(arg);
+    }
+    if (step.isError) li.classList.add("fail");
+    list.appendChild(li);
+  }
+  details.append(summary, list);
+  return details;
+}
+
+// Turn each "### Product" section of the agent's answer into a restock plan card.
+function wrapSections(container) {
+  for (const heading of [...container.querySelectorAll("h3")]) {
+    const card = document.createElement("div");
+    card.className = "plan-card";
+    heading.before(card);
+    let node = heading;
+    while (node && !(node !== heading && /^(H2|H3|HR)$/.test(node.nodeName))) {
+      const next = node.nextElementSibling;
+      card.appendChild(node);
+      node = next;
+    }
+  }
+  // Highlight assumptions and max_stock notes.
+  for (const li of container.querySelectorAll("li")) {
+    if (/max_stock|maks|diasumsikan|asumsi|assumed/i.test(li.textContent) && !li.querySelector("li")) {
+      li.classList.add("note-line");
+    }
+  }
+  for (const a of container.querySelectorAll("a")) {
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+  }
+}
+
+async function send(text) {
+  if (busy || !text.trim()) return;
+  busy = true;
+  sendBtn.disabled = true;
+  input.value = "";
+  autoGrow();
+
+  addMessage("user", "Kamu").querySelector(".bubble").textContent = text;
+  const reply = addMessage("agent", "Agent");
+  const bubble = reply.querySelector(".bubble");
+  const started = Date.now();
+  bubble.innerHTML = '<div class="thinking"><span class="dot"></span><span>Agent sedang bekerja… 0 dtk</span></div>';
+  const timer = setInterval(() => {
+    const label = bubble.querySelector(".thinking span:last-child");
+    if (label) label.textContent = `Agent sedang bekerja… ${Math.round((Date.now() - started) / 1000)} dtk`;
+  }, 1000);
+  setStatus("busy", "Bekerja…");
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }),
+    });
+    const data = await res.json();
+    bubble.innerHTML = "";
+    const steps = renderSteps(data.steps);
+    if (steps) bubble.appendChild(steps);
+
+    if (!res.ok) throw new Error(data.error || "Permintaan gagal.");
+
+    const answer = document.createElement("div");
+    answer.innerHTML = DOMPurify.sanitize(marked.parse(data.answer));
+    wrapSections(answer);
+    bubble.appendChild(answer);
+    // New supplier prices were compared: open the draft order so the result is visible.
+    if (data.steps.some((step) => step.name === "compare_supplier_offers" && !step.isError)) showView("draft");
+    setStatus("", "Siap");
+  } catch (error) {
+    reply.classList.add("error");
+    const msg = document.createElement("div");
+    msg.textContent = "Gagal: " + (error.message || error);
+    bubble.appendChild(msg);
+    setStatus("error", "Error");
+  } finally {
+    clearInterval(timer);
+    busy = false;
+    sendBtn.disabled = false;
+    messages.scrollTop = messages.scrollHeight;
+    loadInventory();
+    loadDraft();
+  }
+}
+
+function autoGrow() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+  // Show a scrollbar only once the text is taller than the box.
+  input.style.overflowY = input.scrollHeight > 160 ? "auto" : "hidden";
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); send(input.value); });
+input.addEventListener("input", autoGrow);
+input.addEventListener("keydown", (e) => {
+  // Enter sends, Shift+Enter makes a new line.
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input.value); }
+});
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    document.querySelector('.tabs button[data-tab="chat"]').click();
+    send(chip.dataset.prompt);
+  });
+});
+
+loadInventory();
+loadDraft();
+</script>
+</body>
+</html>
