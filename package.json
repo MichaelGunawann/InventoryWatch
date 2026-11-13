@@ -7,7 +7,8 @@
     "agent": "tsx src/agent.ts",
     "server": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "web": "tsx src/web.ts"
+    "web": "tsx src/web.ts",
+    "seed:sales": "tsx scripts/seed-sales.ts"
   },
   "keywords": [],
   "author": "",

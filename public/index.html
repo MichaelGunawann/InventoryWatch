@@ -83,6 +83,7 @@
     border-radius: 8px; padding: 6px 10px; font-size: 13px;
   }
   .icon-btn:hover { border-color: var(--primary); }
+  .icon-btn { white-space: nowrap; }
 
   /* Layout */
   .tabs { display: none; }
@@ -181,13 +182,14 @@
   .subtabs { display: flex; gap: 4px; padding: 12px 12px 0; border-bottom: 1px solid var(--border); }
   .subtabs button {
     flex: 1; background: none; border: 0; border-bottom: 2px solid transparent;
-    padding: 8px 6px 10px; color: var(--muted); font-size: 14px; font-weight: 500;
+    padding: 8px 4px 10px; color: var(--muted); font-size: 13.5px; font-weight: 500; white-space: nowrap;
   }
   .subtabs button.active { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
   .subtabs .count {
     display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; border-radius: 999px;
     background: var(--low-bg); color: var(--low); font-size: 12px; font-weight: 600;
   }
+  .subtabs .count[hidden] { display: none; }
   .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .view[hidden] { display: none; }
 
@@ -262,6 +264,24 @@
   .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .draft-empty { margin: auto; padding: 24px; text-align: center; color: var(--muted); }
+  .order-btn { width: 100%; margin-top: 8px; }
+
+  /* Purchase orders */
+  .order-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: 13.5px; }
+  .order-card.done { opacity: .75; }
+  .order-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .order-head strong { font-size: 14.5px; }
+  .order-head small { color: var(--muted); font-size: 12px; display: block; }
+  .order-item { padding: 10px 12px; border-bottom: 1px dashed var(--border); }
+  .order-item:last-child { border-bottom: 0; }
+  .order-item .draft-head { margin-bottom: 4px; }
+  .status { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .status.dipesan { color: var(--low); }
+  .status.diterima, .status.selesai { color: var(--primary); }
+  .status.dibatalkan { color: var(--muted); }
+  .order-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .order-actions .btn { padding: 6px 10px; font-size: 13px; }
+  .order-foot { padding: 10px 12px; border-top: 1px solid var(--border); }
 
   /* Supplier picker */
   dialog {
@@ -314,19 +334,50 @@
   .toast[hidden] { display: none; }
   .toast button { background: none; border: 0; color: var(--primary); font-weight: 700; }
 
-  .quick { padding: 12px 16px 16px; border-top: 1px solid var(--border); }
-  .quick h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .quick { padding: 10px 16px 14px; border-top: 1px solid var(--border); }
+  .quick summary {
+    font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+    font-weight: 600; cursor: pointer; padding: 2px 0 6px;
+  }
+  .quick-group { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+  .quick-group > span { width: 58px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+  .quick-group > div { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip {
-    display: block; width: 100%; text-align: left; margin-bottom: 6px;
     background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 12px; font-size: 14px;
+    border-radius: 999px; padding: 4px 11px; font-size: 13px;
   }
   .chip:hover { border-color: var(--primary); color: var(--primary); }
 
+  /* Insights */
+  .insights { flex: 1; overflow-y: auto; padding: 14px 16px; font-size: 14px; }
+  .insights h1 { font-size: 15px; margin: 0 0 8px; }
+  .insights ul { padding-left: 18px; margin: 0; }
+  .insights li { margin-bottom: 8px; }
+  .insight-uri { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+
+  /* MCP tools dialog */
+  .mcp-list { overflow-y: auto; padding: 0 16px 16px; font-size: 13.5px; }
+  .mcp-list h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+  .mcp-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .mcp-item code { font-family: ui-monospace, monospace; font-weight: 600; color: var(--primary); }
+  .mcp-item p { margin: 2px 0 0; color: var(--muted); }
+  .confirm-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); font-size: 13.5px;
+  }
+  .confirm-bar span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+  .confirm-bar button { border-radius: 8px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .confirm-bar .btn-primary { background: var(--primary); color: var(--on-primary); border: 1px solid var(--primary); }
+  .confirm-bar .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .steps .why { display: block; color: var(--danger); font-size: 12px; margin: 1px 0 3px; white-space: pre-wrap; }
+  .steps .why.wait { color: var(--muted); }
+
   /* Phone: inventory becomes a tab */
   @media (max-width: 860px) {
-    header { padding: 10px 16px; }
-    .brand p { display: none; }
+    header { padding: 10px 16px; gap: 6px; }
+    .brand p, #status-text, .theme-label { display: none; }
+    .brand h1 { font-size: 15px; }
+    .icon-btn { padding: 5px 8px; font-size: 12.5px; }
     .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); }
     .tabs button {
       flex: 1; background: none; border: 0; padding: 10px; color: var(--muted);
@@ -337,7 +388,7 @@
     .chat { border-right: 0; }
     main[data-tab="chat"] aside, main[data-tab="inventory"] .chat { display: none; }
     /* Give the draft list the full height on phones. */
-    aside:has(#view-draft:not([hidden])) .quick { display: none; }
+    aside:has(#view-draft:not([hidden])) .quick, aside:has(#view-insights:not([hidden])) .quick { display: none; }
     .messages { padding: 18px 16px; }
     .composer { padding: 12px 16px; }
   }
@@ -351,6 +402,8 @@
   </div>
   <div class="spacer"></div>
   <div class="status" id="status"><span class="dot"></span><span id="status-text">Siap</span></div>
+  <button class="icon-btn" id="mcp-btn" type="button">Tool MCP</button>
+  <button class="icon-btn" id="new-chat" type="button" title="Mulai percakapan baru">Chat baru</button>
   <button class="icon-btn" id="theme-btn" type="button">☀ Terang</button>
 </header>
 
@@ -378,7 +431,9 @@
   <aside>
     <div class="subtabs" role="tablist">
       <button type="button" class="active" data-view="inventory">Inventaris</button>
-      <button type="button" data-view="draft">Draf Pesanan <span class="count" id="draft-count" hidden></span></button>
+      <button type="button" data-view="draft">Draf <span class="count" id="draft-count" hidden></span></button>
+      <button type="button" data-view="orders">Pesanan <span class="count" id="orders-count" hidden></span></button>
+      <button type="button" data-view="insights">Insight</button>
     </div>
 
     <div class="view" id="view-inventory">
@@ -403,18 +458,43 @@
         <div class="draft-total"><span>Total perkiraan</span><span id="draft-total">Rp0</span></div>
         <div class="draft-sub" id="draft-sub"></div>
         <div class="draft-actions">
-          <button class="btn primary" type="button" id="draft-price">Cari harga supplier</button>
+          <button class="btn" type="button" id="draft-price">Cari harga supplier</button>
           <button class="btn" type="button" id="draft-copy">Salin draf</button>
         </div>
+        <button class="btn primary order-btn" type="button" id="draft-order">Tandai sudah dipesan</button>
       </div>
     </div>
 
-    <div class="quick">
-      <h3>Pertanyaan cepat</h3>
-      <button class="chip" type="button" data-prompt="Produk apa saja yang stoknya di bawah safety stock?">Cek stok rendah</button>
-      <button class="chip" type="button" data-prompt="Produk apa saja yang perlu di-restock, berapa yang harus dipesan, dan dari supplier termurah mana?">Rekomendasi restock</button>
-      <button class="chip" type="button" data-prompt="Tampilkan semua produk di inventaris.">Lihat semua produk</button>
+    <div class="view" id="view-orders" hidden>
+      <div class="draft-list" id="orders-list"></div>
     </div>
+
+    <div class="view" id="view-insights" hidden>
+      <div class="insights" id="insights"></div>
+    </div>
+
+    <details class="quick" open>
+      <summary>Pertanyaan cepat</summary>
+      <div class="quick-group"><span>Restock</span><div>
+        <button class="chip" type="button" data-prompt="Produk apa saja yang stoknya di bawah safety stock?">Stok rendah</button>
+        <button class="chip" type="button" data-prompt="Produk apa saja yang perlu di-restock, berapa yang harus dipesan, dan dari supplier termurah mana?">Rekomendasi restock</button>
+      </div></div>
+      <div class="quick-group"><span>Skema</span><div>
+        <button class="chip" type="button" data-prompt="Jelaskan struktur database: tabel apa saja yang ada, kolomnya apa, dan hubungan antartabel.">Struktur database</button>
+      </div></div>
+      <div class="quick-group"><span>Data</span><div>
+        <button class="chip" type="button" data-prompt="Tambah stok Indomie Goreng.">Tambah stok</button>
+        <button class="chip" type="button" data-prompt="Saya mau menambah produk baru ke inventaris.">Produk baru</button>
+        <button class="chip" type="button" data-prompt="Saya mau menghapus produk dari inventaris.">Hapus produk</button>
+      </div></div>
+      <div class="quick-group"><span>Analitik</span><div>
+        <button class="chip" type="button" data-prompt="Urutkan produk dari yang paling kritis berdasarkan persentase stok terhadap safety threshold.">Produk paling kritis</button>
+        <button class="chip" type="button" data-prompt="Berapa total perkiraan biaya draf pesanan, dikelompokkan per supplier?">Biaya per supplier</button>
+      </div></div>
+      <div class="quick-group"><span>Insight</span><div>
+        <button class="chip" type="button" data-prompt="Analisis kondisi inventaris sekarang lalu simpan 1 insight terpenting ke memo insights.">Simpan insight</button>
+      </div></div>
+    </details>
   </aside>
 </main>
 
@@ -449,6 +529,19 @@
   </form>
 </dialog>
 
+<dialog id="mcp">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head">
+      <div>
+        <h2>Tool &amp; resource MCP</h2>
+        <p>Dibaca langsung dari server MCP InventoryWatch (listTools / listResources).</p>
+      </div>
+      <button class="x-btn" value="cancel" aria-label="Tutup">✕</button>
+    </div>
+    <div class="mcp-list" id="mcp-list"></div>
+  </form>
+</dialog>
+
 <div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="toast-undo">Batalkan</button></div>
 
 <script>
@@ -462,7 +555,8 @@ let busy = false;
 /* ---------- Theme ---------- */
 function renderThemeButton() {
   const dark = document.documentElement.dataset.theme === "dark";
-  $("theme-btn").textContent = dark ? "☀ Terang" : "☾ Gelap";
+  $("theme-btn").innerHTML = dark ? '☀<span class="theme-label"> Terang</span>' : '☾<span class="theme-label"> Gelap</span>';
+  $("theme-btn").title = dark ? "Ganti ke tema terang" : "Ganti ke tema gelap";
 }
 $("theme-btn").addEventListener("click", () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -549,6 +643,10 @@ function showView(view) {
   document.querySelectorAll(".subtabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   $("view-inventory").hidden = view !== "inventory";
   $("view-draft").hidden = view !== "draft";
+  $("view-orders").hidden = view !== "orders";
+  $("view-insights").hidden = view !== "insights";
+  if (view === "insights") loadInsights();
+  if (view === "orders") loadOrders();
 }
 document.querySelectorAll(".subtabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
@@ -621,7 +719,7 @@ function renderDraft() {
 
   const list = $("draft-list");
   if (draft.items.length === 0) {
-    list.replaceChildren(el("div", "draft-empty", "Draf kosong. Produk di bawah safety stock akan masuk otomatis, atau tambah produk sendiri."));
+    list.replaceChildren(el("div", "draft-empty", "Draf kosong. Produk di bawah safety stock akan masuk otomatis (kecuali yang sudah dipesan dan belum sampai), atau tambah produk sendiri."));
   } else {
     list.replaceChildren(...draft.items.map(renderItem));
   }
@@ -633,6 +731,7 @@ function renderDraft() {
       ? `${draft.unpriced} dari ${draft.items.length} produk belum ada supplier. Belum termasuk ongkir.`
       : "Belum termasuk ongkir dan minimum order.";
   $("draft-copy").disabled = draft.items.length === 0;
+  $("draft-order").disabled = draft.items.length === 0;
   if (!$("add-panel").hidden) renderAddList();
 }
 
@@ -912,6 +1011,146 @@ $("draft-copy").addEventListener("click", async () => {
   setTimeout(() => { btn.textContent = "Salin draf"; }, 1500);
 });
 
+/* ---------- Purchase orders: draft -> dipesan -> diterima ---------- */
+const STATUS_LABEL = { dipesan: "Dipesan", diterima: "Sudah sampai", dibatalkan: "Dibatalkan", selesai: "Selesai" };
+let orders = [];
+
+const localTime = (utc) => new Date(utc.replace(" ", "T") + "Z").toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" });
+
+function applyOrders(data) {
+  orders = data.orders;
+  const count = $("orders-count");
+  count.hidden = data.open === 0;
+  count.textContent = data.open;
+  if (data.draft) { draft = data.draft; renderDraft(); }
+  renderOrders();
+}
+
+async function loadOrders() {
+  try { applyOrders(await api("GET", "/api/orders")); } catch {}
+}
+
+// Every order action returns the new state; stock may have changed, so the inventory is reloaded too.
+async function orderAction(url, button) {
+  if (button) button.disabled = true;
+  try {
+    applyOrders(await api("POST", url));
+    loadInventory();
+  } catch (error) {
+    alert(error.message);
+    loadOrders();
+  }
+}
+
+function renderOrders() {
+  const list = $("orders-list");
+  if (orders.length === 0) {
+    list.replaceChildren(el("div", "draft-empty", "Belum ada pesanan. Buka tab Draf lalu tekan \"Tandai sudah dipesan\"."));
+    return;
+  }
+  list.replaceChildren(...orders.map((order) => {
+    const card = el("div", "order-card" + (order.status === "selesai" ? " done" : ""));
+    const head = el("div", "order-head");
+    const title = el("div");
+    title.append(el("strong", "", order.code), el("small", "", `Dipesan ${localTime(order.orderedAt)} · ${rupiah(order.total)}`));
+    head.append(title, el("span", "status " + order.status, order.status === "dipesan" ? `${order.open} belum sampai` : STATUS_LABEL.selesai));
+    card.append(head);
+
+    for (const item of order.items) {
+      const box = el("div", "order-item");
+      const top = el("div", "draft-head");
+      const name = el("div");
+      const qty = item.unit === "dus" ? `${item.quantity} dus` : `${item.quantity} pcs`;
+      name.append(el("strong", "", item.item_name), el("small", "", `${item.sku} · ${qty} → stok +${item.receive_pcs} pcs saat sampai`));
+      top.append(name, el("span", "status " + item.status, STATUS_LABEL[item.status]));
+      box.append(top);
+      box.append(row("Supplier", item.supplier_name ? link(item.supplier_name, item.supplier_url) : el("span", "", "belum dipilih")));
+      if (item.cost !== null) box.append(row("Biaya", `${item.packs} pack × ${rupiah(item.price)} = ${rupiah(item.cost)}`));
+      if (item.closed_at) box.append(el("div", "draft-muted", `${STATUS_LABEL[item.status]}: ${localTime(item.closed_at)}`));
+
+      if (item.status === "dipesan") {
+        const actions = el("div", "order-actions");
+        const arrived = el("button", "btn primary", "Sudah sampai");
+        const cancel = el("button", "btn", "Batalkan");
+        arrived.type = cancel.type = "button";
+        arrived.addEventListener("click", () => {
+          if (confirm(`${item.item_name} sudah sampai?\nStok akan ditambah ${item.receive_pcs} pcs.`)) orderAction(`/api/orders/items/${item.id}/receive`, arrived);
+        });
+        cancel.addEventListener("click", () => {
+          if (confirm(`Batalkan pesanan ${item.item_name}?\nKalau stoknya masih rendah, produk ini masuk lagi ke draf.`)) orderAction(`/api/orders/items/${item.id}/cancel`, cancel);
+        });
+        actions.append(arrived, cancel);
+        box.append(actions);
+      }
+      card.append(box);
+    }
+
+    if (order.open > 1) {
+      const foot = el("div", "order-foot");
+      const all = el("button", "btn primary", `Semua sudah sampai (${order.open})`);
+      all.type = "button";
+      all.style.width = "100%";
+      all.addEventListener("click", () => {
+        if (confirm(`Tandai ${order.open} produk di ${order.code} sudah sampai? Stoknya akan ditambah.`)) orderAction(`/api/orders/${order.id}/receive-all`, all);
+      });
+      foot.append(all);
+      card.append(foot);
+    }
+    return card;
+  }));
+}
+
+$("draft-order").addEventListener("click", () => {
+  const unpriced = draft.unpriced > 0 ? `\n${draft.unpriced} produk belum ada supplier.` : "";
+  if (!confirm(`Tandai ${draft.items.length} produk sebagai sudah dipesan?\nTotal perkiraan ${rupiah(draft.total)}.${unpriced}`)) return;
+  orderAction("/api/orders", $("draft-order")).then(() => showView("orders"));
+});
+
+/* ---------- Insights (memo://insights resource) ---------- */
+async function loadInsights() {
+  try {
+    const data = await api("GET", "/api/insights");
+    const box = $("insights");
+    box.innerHTML = DOMPurify.sanitize(marked.parse(data.text || ""));
+    box.prepend(el("div", "insight-uri", `Resource MCP: ${data.uri}`));
+  } catch {
+    $("insights").textContent = "Gagal memuat insight.";
+  }
+}
+
+/* ---------- MCP tools dialog ---------- */
+$("mcp-btn").addEventListener("click", async () => {
+  const list = $("mcp-list");
+  list.replaceChildren(el("p", "", "Memuat…"));
+  $("mcp").showModal();
+  try {
+    const data = await api("GET", "/api/mcp");
+    const section = (title, items, key) => {
+      const nodes = [el("h3", "", `${title} (${items.length})`)];
+      for (const item of items) {
+        const row = el("div", "mcp-item");
+        row.append(el("code", "", item[key]), el("p", "", item.description));
+        nodes.push(row);
+      }
+      return nodes;
+    };
+    list.replaceChildren(...section("Tools", data.tools, "name"), ...section("Resources", data.resources, "uri"));
+  } catch (error) {
+    list.replaceChildren(el("p", "", "Gagal memuat: " + error.message));
+  }
+});
+
+/* ---------- New conversation ---------- */
+$("new-chat").addEventListener("click", async () => {
+  if (busy) return;
+  try { await api("POST", "/api/chat/reset"); } catch {}
+  messages.replaceChildren();
+  const empty = el("div", "empty");
+  empty.id = "empty";
+  empty.append(el("h2", "", "Halo, mau cek apa hari ini?"), el("p", "", "Percakapan baru dimulai. Agent tidak lagi mengingat pesan sebelumnya."));
+  messages.append(empty);
+});
+
 /* ---------- Chat ---------- */
 function addMessage(role, label) {
   $("empty")?.remove();
@@ -935,15 +1174,20 @@ function renderSteps(steps) {
     const li = document.createElement("li");
     const name = document.createElement("code");
     name.textContent = step.name;
-    li.append(step.isError ? "✕ " : "✓ ", name);
-    const target = step.args.productName || step.args.productId;
+    li.append(step.pending ? "⏸ " : step.isError ? "✕ " : "✓ ", name);
+    const target = step.args.productName || step.args.productId || step.args.sku || step.args.table || step.args.itemName;
     if (target) {
       const arg = document.createElement("span");
       arg.className = "arg";
       arg.textContent = ` · ${target}`;
       li.append(arg);
     }
-    if (step.isError) li.classList.add("fail");
+    if (step.isError) {
+      li.classList.add("fail");
+      if (step.message) li.append(el("span", "why", step.message));
+    } else if (step.pending) {
+      li.append(el("span", "why wait", step.message || "Menunggu konfirmasi."));
+    }
     list.appendChild(li);
   }
   details.append(summary, list);
@@ -975,8 +1219,28 @@ function wrapSections(container) {
   }
 }
 
-async function send(text) {
+// Buttons under an answer that waits for confirmation. "Ya" sends confirm: true, so the server runs
+// exactly the change shown (no language guessing); "Batal" is a normal message.
+function confirmBar(step) {
+  const a = step.args || {};
+  const action = step.name === "delete_product" ? `Hapus produk ${a.sku}`
+    : step.name === "add_product" ? `Tambah produk "${a.itemName}"`
+    : `Ubah produk ${a.sku}`;
+  const bar = el("div", "confirm-bar");
+  bar.append(el("span", "", `Menunggu konfirmasi: ${action}`));
+  const yes = el("button", "btn-primary", step.name === "delete_product" ? "Ya, hapus" : step.name === "add_product" ? "Ya, tambah produk baru" : "Ya, simpan");
+  const no = el("button", "btn-ghost", "Batal");
+  yes.type = no.type = "button";
+  yes.addEventListener("click", () => send(yes.textContent, { confirm: true }));
+  no.addEventListener("click", () => send("batal"));
+  bar.append(yes, no);
+  return bar;
+}
+
+async function send(text, options = {}) {
   if (busy || !text.trim()) return;
+  // Older confirmation buttons no longer apply once a new message is sent.
+  document.querySelectorAll(".confirm-bar").forEach((bar) => bar.remove());
   busy = true;
   sendBtn.disabled = true;
   input.value = "";
@@ -997,7 +1261,7 @@ async function send(text) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, confirm: options.confirm === true }),
     });
     const data = await res.json();
     bubble.innerHTML = "";
@@ -1010,8 +1274,11 @@ async function send(text) {
     answer.innerHTML = DOMPurify.sanitize(marked.parse(data.answer));
     wrapSections(answer);
     bubble.appendChild(answer);
+    const waiting = data.steps.filter((step) => step.pending).pop();
+    if (waiting) bubble.appendChild(confirmBar(waiting));
     // New supplier prices were compared: open the draft order so the result is visible.
     if (data.steps.some((step) => step.name === "compare_supplier_offers" && !step.isError)) showView("draft");
+    if (data.steps.some((step) => step.name === "append_insight" && !step.isError)) showView("insights");
     setStatus("", "Siap");
   } catch (error) {
     reply.classList.add("error");
@@ -1026,6 +1293,7 @@ async function send(text) {
     messages.scrollTop = messages.scrollHeight;
     loadInventory();
     loadDraft();
+    loadOrders();
   }
 }
 
@@ -1051,6 +1319,7 @@ document.querySelectorAll(".chip").forEach((chip) => {
 
 loadInventory();
 loadDraft();
+loadOrders();
 </script>
 </body>
 </html>

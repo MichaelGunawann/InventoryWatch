@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { askWithTimeout, client, connectAgent } from "./agent-core.js";
+import { askWithTimeout, client, connectAgent, type AgentStep, type ChatHistory } from "./agent-core.js";
 
 async function main() {
     const tools = await connectAgent();
@@ -17,6 +17,9 @@ async function main() {
         output: stdout,
     });
 
+    // One conversation for the whole CLI session, so the agent can ask follow-up questions.
+    const history: ChatHistory = [];
+
     try {
         while (true) {
             const prompt = await rl.question("\nYou: ");
@@ -30,9 +33,23 @@ async function main() {
             }
 
             try {
-                const answer = await askWithTimeout(prompt);
+                const steps: AgentStep[] = [];
+                const answer = await askWithTimeout(prompt, steps, history);
 
                 console.log("\nGemini:", answer);
+
+                // The CLI has no buttons, so a change that waits for confirmation is asked here as y/n.
+                const waiting = steps.filter((step) => step.pending).pop();
+
+                if (waiting) {
+                    const reply = await rl.question(`\nJalankan ${waiting.name} ${JSON.stringify(waiting.args)}? (y/n): `);
+
+                    if (reply.trim().toLowerCase() === "y") {
+                        console.log("\nGemini:", await askWithTimeout("Ya, lanjutkan.", [], history, { confirm: true }));
+                    } else {
+                        console.log("Dibatalkan.");
+                    }
+                }
             } catch (error) {
                 console.error(
                     "\nRequest failed:",

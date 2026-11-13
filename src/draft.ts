@@ -75,6 +75,29 @@ export function createDraft(db: Database) {
             assumption TEXT NOT NULL,
             compared_at TEXT NOT NULL
         );
+        -- A draft becomes a purchase order when it is marked as ordered. Items keep a snapshot
+        -- (name, supplier, price) and no foreign key, so the order history survives product deletion.
+        CREATE TABLE IF NOT EXISTS purchase_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ordered_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS purchase_order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES purchase_orders(id),
+            sku TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,           -- in dus (or pcs if the carton size is unknown), as in the draft
+            unit TEXT NOT NULL,                  -- 'dus' or 'pcs'
+            receive_pcs INTEGER NOT NULL,        -- pcs added to stock on arrival (whole supplier packs)
+            supplier_name TEXT,
+            supplier_url TEXT,
+            price REAL,
+            units_per_pack INTEGER,
+            packs INTEGER,
+            cost REAL,
+            status TEXT NOT NULL DEFAULT 'dipesan',   -- 'dipesan', 'diterima', 'dibatalkan'
+            closed_at TEXT
+        );
     `);
 
     const getProduct = (sku: string) => db.prepare(`
@@ -97,11 +120,14 @@ export function createDraft(db: Database) {
         `).run({ ...fields, sku });
     };
 
-    // Low-stock products join the draft automatically; auto items leave it when the stock is fine again.
+    // Low-stock products join the draft automatically, unless they are already ordered and on the way.
+    // Auto items leave the draft when the stock is fine again.
     function sync() {
         db.prepare(`
             INSERT OR IGNORE INTO draft_order_items (sku, updated_at)
-            SELECT sku, datetime('now') FROM inventory WHERE current_stock < safety_threshold
+            SELECT sku, datetime('now') FROM inventory
+            WHERE current_stock < safety_threshold
+              AND sku NOT IN (SELECT sku FROM purchase_order_items WHERE status = 'dipesan')
         `).run();
         db.prepare(`
             DELETE FROM draft_order_items

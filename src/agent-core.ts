@@ -138,6 +138,98 @@ const toolDeclarations: any[] = [
             required: ["productName", "offers"],
         },
     },
+    {
+        name: "list_tables",
+        description: "List all tables in the SQLite database with row counts. Use for questions about how the data is organised.",
+        parameters: { type: Type.OBJECT, properties: {} },
+    },
+    {
+        name: "describe_table",
+        description: "Show the columns, types, keys, and foreign keys of one table.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: { table: { type: Type.STRING, description: "Table name from list_tables." } },
+            required: ["table"],
+        },
+    },
+    {
+        name: "read_query",
+        description: "Run one read-only SQLite SELECT query for analytics (aggregates, JOINs, GROUP BY, percentages). Writes are rejected. Check column names with describe_table first if unsure.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: { sql: { type: Type.STRING, description: "A single SELECT statement." } },
+            required: ["sql"],
+        },
+    },
+    {
+        name: "adjust_stock",
+        description: "Add or subtract stock for one product. Only when the exact SKU, quantity, unit, and type of change are clear.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                sku: { type: Type.STRING, description: "Exact SKU from check_stock, e.g. SKU001." },
+                quantity: { type: Type.NUMBER, description: "How many. The type decides add or subtract; only for koreksi use a negative number to subtract." },
+                unit: { type: Type.STRING, enum: ["pcs", "dus"], description: "Unit the user gave: pcs or dus (karton)." },
+                type: {
+                    type: Type.STRING,
+                    enum: ["terjual", "barang_datang", "rusak", "hilang", "koreksi"],
+                    description: "terjual = sold (subtract), barang_datang = goods received (add), rusak = damaged/expired (subtract), hilang = lost/stolen (subtract), koreksi = stock count correction (add or subtract).",
+                },
+                reason: { type: Type.STRING, description: "Optional extra note from the user, e.g. 'kemasan sobek'." },
+            },
+            required: ["sku", "quantity", "unit", "type"],
+        },
+    },
+    {
+        name: "add_product",
+        description: "Add a new product. The SKU is generated automatically. Only when the full name (brand, variant, size), current stock, and safety threshold are known.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                itemName: { type: Type.STRING, description: "Full product name with brand, variant, and size." },
+                currentStock: { type: Type.NUMBER, description: "Current stock in pcs." },
+                safetyThreshold: { type: Type.NUMBER, description: "Minimum stock in pcs." },
+                maxStock: { type: Type.NUMBER, description: "Stock to refill up to, in pcs (optional)." },
+                unitsPerCarton: { type: Type.NUMBER, description: "Items per dus/karton (optional)." },
+                searchKeyword: { type: Type.STRING, description: "Specific name for supplier search (optional)." },
+            },
+            required: ["itemName", "currentStock", "safetyThreshold"],
+        },
+    },
+    {
+        name: "update_product",
+        description: "Change product settings (name, safety threshold, max stock, units per carton, search keyword). Not for stock quantities.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                sku: { type: Type.STRING, description: "Exact SKU." },
+                itemName: { type: Type.STRING },
+                safetyThreshold: { type: Type.NUMBER },
+                maxStock: { type: Type.NUMBER },
+                unitsPerCarton: { type: Type.NUMBER },
+                searchKeyword: { type: Type.STRING },
+            },
+            required: ["sku"],
+        },
+    },
+    {
+        name: "delete_product",
+        description: "Permanently delete one product with its draft item, supplier offers, and stock history. Only when the user clearly asks to delete that exact product.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: { sku: { type: Type.STRING, description: "Exact SKU (find it with check_stock first)." } },
+            required: ["sku"],
+        },
+    },
+    {
+        name: "append_insight",
+        description: "Save one short business insight to the memo://insights memo after analysing data. Use when the user asks to record or summarise insights, or after an analytics question.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: { insight: { type: Type.STRING, description: "One factual insight based on tool results, in Indonesian." } },
+            required: ["insight"],
+        },
+    },
 ];
 
 // One MCP tool call made while answering, shown as a step in the GUI.
@@ -147,20 +239,23 @@ export type AgentStep = {
     isError: boolean;
     // Data part of the tool result (structuredContent), if the tool sent one.
     structured?: unknown;
+    // Why the tool failed (e.g. a BLOCKED message), shown under the step in the GUI.
+    message?: string;
+    // True when the call was held back until the user confirms it (nothing was saved).
+    pending?: boolean;
 };
+
+// Earlier turns of one conversation, so the agent can ask a follow-up question and understand the answer.
+export type ChatHistory = { role: "user" | "model"; parts: { text: string }[] }[];
+
+const MAX_HISTORY = 20;
 
 export async function connectAgent() {
     await client.connect(transport);
     return client.listTools();
 }
 
-export async function askGemini(prompt: string, steps: AgentStep[] = []): Promise<string> {
-    const contents: any[] = [
-        {
-            role: "user",
-            parts: [
-                {
-                    text: `You are the AI agent for InventoryWatch.
+const SYSTEM_PROMPT = `You are the AI agent for InventoryWatch.
 
 Rules:
   
@@ -193,31 +288,146 @@ Rules:
   - Say that the cheapest is among the search results found, and that prices exclude shipping and minimum order.
 - Treat tool results as the source of truth.
 - If a tool returns an error or cannot find a product, explain that clearly.
-- Do not confuse InventoryWatch with a wristwatch.
+- Schema questions (tables, columns, how data is organised): call list_tables and describe_table.
+- Analytics questions (totals, percentages, rankings, comparisons across tables, best sellers, trends): write a SELECT for read_query. Products are in the table inventory (there is no products table). stock_movements.type says why stock changed: 'terjual' = sales (sold pcs = -change_pcs), 'barang_datang' = deliveries, 'rusak' = damaged/expired, 'hilang' = lost, 'koreksi' = stock count correction. Count ONLY type = 'terjual' as sales; never count rusak, hilang, or koreksi as sales (they can be reported separately as losses). created_at is UTC text 'YYYY-MM-DD HH:MM:SS'; use date()/strftime() for daily or weekly grouping, and datetime('now', '-30 days') for 'this month' unless the user names a calendar month. Some history is simulated demo data (reason contains '(simulasi)'); mention that when presenting sales figures. Purchase orders made from the draft are in purchase_orders and purchase_order_items (status 'dipesan' = on the way, 'diterima' = arrived, 'dibatalkan' = cancelled).
+- If get_low_stock says a product is already ordered, tell the user it is on the way (with the PO number) instead of recommending a new order or searching supplier prices for it, unless the user explicitly asks. Check column names with describe_table first if unsure. Explain the result in plain Indonesian, not as raw JSON.
+- Changing data: use adjust_stock (stock quantities), add_product (new product), update_product (settings), or delete_product (remove a product completely). Only delete when the user explicitly asks to delete or remove a product; never delete to 'fix' something else. If the name matches several products, ask which SKU.
+  - For adjust_stock, the type of change must be clear. If the user does not say why stock goes up or down (for example "kurangi 5 indomie" or "tambah 10 aqua"), ask whether it is terjual, rusak/kedaluwarsa, hilang, barang datang, or koreksi stock opname. Never guess the type.
+  - Before changing data, the request must be unambiguous. First find the product with check_stock. If several products match (for example different sizes or variants), if the quantity is missing, or if it is unclear whether the quantity is in pcs or dus, ask the user a short follow-up question and do NOT call the tool yet.
+  - For add_product, ask for any missing required detail: full name with brand, variant, and size; current stock; safety threshold. Also ask for max stock and units per dus, but the user may skip them.
+  - Keep the product name and size as the user wrote them. You may fix an obvious typo (for example "600mk" -> "600ml", "gireng" -> "goreng"), because the name is shown to the user for confirmation, but never add a brand, variant, or flavour the user did not write (for example "inmie" may become "Indomie", but NOT "Indomie Goreng Rendang"). If a size looks unrealistic for that kind of product (for example instant noodles of several kg), ask the user to double-check.
+  - If the user gives conflicting numbers (for example two different stock values), ask which one is right.
+  - add_product, update_product, and delete_product are held back by code until the user confirms, and code shows confirm buttons. So when the request is clear, CALL THE TOOL; do not ask the user to type "ya" yourself before calling it (no tool call means no button).
+  - The add_product confirmation result lists the existing products. Compare by meaning, not exact spelling (cabe = cabai, ijo = hijau, typos, size written differently or missing). If it looks like an existing product, say so with its SKU and ask whether the user meant that one.
+  - When a tool result says NOT DONE YET, list the exact values (for add/update: name, stock, threshold, max stock, units per dus; for delete: SKU, name, current stock, and that its stock history and supplier offers are deleted too) and tell the user to press the confirm button below.
+  - On the user's next reply: if it clearly agrees to exactly that action (any wording), call the same tool again with exactly the same values. Deletes cannot be confirmed by text; ask the user to press the button. If the reply corrects something, asks for something else, or is unclear, do not repeat the call; treat it as a new request and ask if unsure which action the user wants.
+  - Never guess a SKU, quantity, unit, or size. After the change, report the before and after values from the tool result.
+- Insights: when the user asks to save or summarise insights, or after answering an analytics question when the user asks for it, call append_insight with one short factual insight based on tool results.
+- If the user refers to something that is not in this conversation (for example "itu", "yang tadi", "yang aneh" right after a new chat), do not guess which product they mean; ask.
+- Use earlier messages in this conversation to understand short follow-up answers (for example "yang 85g, 2 dus").
+- Do not confuse InventoryWatch with a wristwatch.`;
 
-User request: ${prompt}`,
-                },
-            ],
-        },
+// add_product, update_product and delete_product change product data, so code holds them back and the user
+// confirms first. Gemini understands the reply; code only checks that what runs is exactly what was shown:
+// - the waiting call lives for one turn only (the user's very next message), then it is dropped;
+// - add/update run when Gemini repeats exactly the same call after the user's reply;
+// - delete runs only from the confirm button (or the CLI y/n prompt), never from typed text, because it cannot be undone.
+const CONFIRM_TOOLS = new Set(["add_product", "update_product", "delete_product"]);
+const BUTTON_ONLY = new Set(["delete_product"]);
+
+type PendingCall = { name: string; args: Record<string, unknown>; key: string };
+const pendingCalls = new WeakMap<ChatHistory, PendingCall>();
+
+export type AskOptions = {
+    // True when the user pressed the confirm button: code runs the waiting call itself, unchanged.
+    confirm?: boolean;
+};
+
+function callKey(name: string, args: Record<string, unknown>) {
+    const sorted = Object.keys(args).sort().map((key) => [key, typeof args[key] === "string" ? (args[key] as string).trim() : args[key]]);
+    return JSON.stringify([name, sorted]);
+}
+
+function functionResponse(call: { name?: string; id?: string }, response: Record<string, unknown>) {
+    return { role: "user", parts: [{ functionResponse: { name: call.name, ...(call.id ? { id: call.id } : {}), response } }] };
+}
+
+const MODEL = "gemini-3.5-flash-lite";
+// Optional second model (set GEMINI_FALLBACK_MODEL in .env) used only when the main one stays overloaded.
+const FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL?.trim() || null;
+// 503 = model overloaded, 429 = rate limit, 500 = temporary server error. Other errors (bad key, bad request) are not retried.
+const RETRYABLE = new Set([429, 500, 503]);
+const RETRY_DELAYS_MS = [2000, 4000, 8000];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Asking Gemini has no side effects (tools run only after a response arrives), so a failed call is safe to repeat.
+async function generateWithRetry(contents: any[]) {
+    const models = FALLBACK_MODEL ? [MODEL, FALLBACK_MODEL] : [MODEL];
+    let lastError: unknown;
+
+    for (const model of models) {
+        for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+            try {
+                return await ai.models.generateContent({
+                    model,
+                    contents,
+                    config: {
+                        systemInstruction: SYSTEM_PROMPT,
+                        tools: [{ functionDeclarations: toolDeclarations }],
+                    },
+                });
+            } catch (error) {
+                lastError = error;
+                const status = (error as { status?: number }).status;
+
+                // "fetch failed" = the request never reached Google (internet dropped, DNS, timeout).
+                if (!isNetworkError(error) && !(status && RETRYABLE.has(status))) {
+                    throw error;
+                }
+
+                if (attempt < RETRY_DELAYS_MS.length) {
+                    console.log(`[Gemini ${model} ${status ?? "network error"}, retrying in ${RETRY_DELAYS_MS[attempt] / 1000}s]`);
+                    await sleep(RETRY_DELAYS_MS[attempt]);
+                }
+            }
+        }
+    }
+
+    const status = (lastError as { status?: number }).status;
+    throw new Error(
+        isNetworkError(lastError)
+            ? "Tidak bisa terhubung ke Gemini (koneksi internet bermasalah, sudah dicoba ulang beberapa kali). Cek internet lalu kirim lagi."
+            : status === 429
+                ? "Kuota/limit Gemini sedang habis. Tunggu sebentar lalu coba lagi."
+                : "Server Gemini sedang sibuk (sudah dicoba ulang beberapa kali). Coba lagi sebentar lagi.",
+    );
+}
+
+function isNetworkError(error: unknown) {
+    return error instanceof TypeError && /fetch failed|network|socket|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(
+        `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}`,
+    );
+}
+
+export async function askGemini(prompt: string, steps: AgentStep[] = [], history: ChatHistory = [], options: AskOptions = {}): Promise<string> {
+    // A waiting call can only be confirmed by the very next message, so it is taken out now.
+    const previous = pendingCalls.get(history);
+    pendingCalls.delete(history);
+
+    let geminiPrompt = prompt;
+
+    if (options.confirm) {
+        if (!previous) {
+            const answer = "Tidak ada perubahan yang sedang menunggu konfirmasi. Kirim ulang permintaanmu.";
+            history.push({ role: "user", parts: [{ text: prompt }] }, { role: "model", parts: [{ text: answer }] });
+            return answer;
+        }
+
+        // The button runs exactly the call the user saw; Gemini only reports the result.
+        const result = await runTool(previous.name, previous.args, steps);
+        geminiPrompt = `${prompt}\n\n[The user pressed the confirm button. Code already ran ${previous.name} with ${JSON.stringify(previous.args)}. `
+            + `Result: ${result.text}\nReport this result to the user. Do not call ${previous.name} again.]`;
+    }
+
+    const contents: any[] = [
+        ...history,
+        { role: "user", parts: [{ text: geminiPrompt }] },
     ];
 
-    for (let turn = 0; turn < 5; turn++) {
-        const response = await ai.models.generateContent({
-            model: "gemini-3.5-flash-lite",
-            contents,
-            config: {
-                tools: [
-                    {
-                        functionDeclarations: toolDeclarations,
-                    },
-                ],
-            },
-        });
+    for (let turn = 0; turn < 8; turn++) {
+        const response = await generateWithRetry(contents);
 
         const functionCalls = response.functionCalls;
 
         if (!functionCalls || functionCalls.length === 0) {
-            return response.text || "Gemini did not return a response.";
+            const answer = response.text || "Gemini did not return a response.";
+
+            // Keep only the text of each turn; tool details stay out of the history to keep it small.
+            history.push({ role: "user", parts: [{ text: prompt }] }, { role: "model", parts: [{ text: answer }] });
+            history.splice(0, Math.max(history.length - MAX_HISTORY, 0));
+
+            return answer;
         }
 
         const modelContent = response.candidates?.[0]?.content;
@@ -234,70 +444,73 @@ User request: ${prompt}`,
             console.log(`\n[Calling MCP tool: ${call.name}]`);
             console.log("Arguments:", call.args);
 
-            try {
-                const result = await client.callTool({
-                    name: call.name,
-                    arguments: call.args ?? {},
-                });
+            const args = call.args ?? {};
+            const key = callKey(call.name, args);
 
-                steps.push({
-                    name: call.name,
-                    args: call.args ?? {},
-                    isError: Boolean(result.isError),
-                    structured: result.structuredContent,
-                });
+            if (CONFIRM_TOOLS.has(call.name)) {
+                const confirmedByReply = previous?.key === key && !BUTTON_ONLY.has(call.name);
 
-                contents.push({
-                    role: "user",
-                    parts: [
-                        {
-                            functionResponse: {
-                                name: call.name,
-                                ...(call.id ? { id: call.id } : {}),
-                                response: {
-                                    result: result.content,
-                                    isError: result.isError ?? false,
-                                },
-                            },
-                        },
-                    ],
-                });
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
+                if (!confirmedByReply) {
+                    pendingCalls.set(history, { name: call.name, args, key });
 
-                steps.push({ name: call.name, args: call.args ?? {}, isError: true });
+                    // A new product is compared with every existing product (by Gemini, by meaning), so
+                    // "Indomie Goreng Cabai Hijau" is noticed when "Indomie Goreng Cabe Ijo 95g" already exists.
+                    const existing = call.name === "add_product" ? (await runTool("list_inventory", {}, steps)).text : "";
 
-                contents.push({
-                    role: "user",
-                    parts: [
-                        {
-                            functionResponse: {
-                                name: call.name,
-                                ...(call.id ? { id: call.id } : {}),
-                                response: {
-                                    error: message,
-                                },
-                            },
-                        },
-                    ],
-                });
+                    steps.push({ name: call.name, args, isError: false, pending: true, message: "Belum dijalankan: menunggu konfirmasi pengguna." });
+                    contents.push(functionResponse(call, {
+                        result: "NOT DONE YET (code requires the user's confirmation; a confirm button is shown below your answer). "
+                            + (existing
+                                ? "Existing products:\n" + existing + "\nFirst compare the new product with these by meaning, not exact spelling "
+                                    + "(cabe = cabai, ijo = hijau, typos, size written differently or missing). If one is probably the same product, "
+                                    + "warn the user, name it with its SKU, and ask whether they meant that one (then use adjust_stock instead) or really "
+                                    + "want a separate new product (then press the button). "
+                                : "")
+                            + "Show the user every value you passed, especially the exact product name, and tell them to press the confirm button"
+                            + (BUTTON_ONLY.has(call.name) ? " (deleting can only be confirmed with the button)." : " or reply to confirm or correct it.")
+                            + " Do not call this tool again in this turn.",
+                    }));
+                    continue;
+                }
             }
+
+            const result = await runTool(call.name, args, steps);
+            contents.push(functionResponse(call, result.error
+                ? { error: result.error }
+                : { result: result.content, isError: result.isError }));
         }
     }
 
     return "Permintaan membutuhkan terlalu banyak pemanggilan tool. Coba pertanyaan yang lebih spesifik.";
 }
 
+// Calls one MCP tool and records it as a step for the GUI.
+async function runTool(name: string, args: Record<string, unknown>, steps: AgentStep[]) {
+    try {
+        const result = await client.callTool({ name, arguments: args });
+        const isError = Boolean(result.isError);
+        const text = firstText(result.content) ?? "";
+
+        // Only the GUI message is shortened; Gemini gets the full text (e.g. the whole product list).
+        steps.push({ name, args, isError, structured: result.structuredContent, message: isError ? text.slice(0, 300) : undefined });
+        return { content: result.content, isError, text, error: undefined };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        steps.push({ name, args, isError: true, message });
+        return { content: undefined, isError: true, text: message, error: message };
+    }
+}
+
 const TIMEOUT_MS = 180000;
 
 // askGemini with a time limit, so one slow request cannot hang the CLI or the GUI.
-export async function askWithTimeout(prompt: string, steps: AgentStep[] = []): Promise<string> {
+export async function askWithTimeout(prompt: string, steps: AgentStep[] = [], history: ChatHistory = [], options: AskOptions = {}): Promise<string> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     try {
         return await Promise.race([
-            askGemini(prompt, steps),
+            askGemini(prompt, steps, history, options),
             new Promise<never>((_, reject) => {
                 timeout = setTimeout(
                     () => reject(new Error(`Gemini timed out after ${TIMEOUT_MS / 1000} seconds`)),
@@ -308,4 +521,10 @@ export async function askWithTimeout(prompt: string, steps: AgentStep[] = []): P
     } finally {
         clearTimeout(timeout);
     }
+}
+
+function firstText(content: unknown): string | undefined {
+    const parts = Array.isArray(content) ? content : [];
+    const part = parts.find((p) => p && typeof p === "object" && (p as { type?: string }).type === "text") as { text?: string } | undefined;
+    return part?.text;
 }

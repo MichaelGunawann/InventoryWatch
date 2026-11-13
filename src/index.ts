@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {tavily} from "@tavily/core";
 import { describeOrder, orderPlan, type StockLevels } from "./order.js";
+import { checkProductSize } from "./size.js";
 
 const currentFile = fileURLToPath(import.meta.url);
 const currentDir = dirname(currentFile);
@@ -15,6 +16,47 @@ const dbPath = resolve(currentDir, "../inventory.db");
 config({ path: resolve(currentDir, "../.env"), quiet: true });
 
 const db = new Database(dbPath);
+db.pragma("busy_timeout = 3000");
+
+// Separate read-only connection for read_query, so AI-written SQL can never change data.
+const readOnlyDb = new Database(dbPath, { readonly: true });
+
+db.exec(`
+    CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sku TEXT NOT NULL REFERENCES inventory(sku),
+        change_pcs INTEGER NOT NULL,
+        stock_before INTEGER NOT NULL,
+        stock_after INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        type TEXT NOT NULL DEFAULT 'koreksi'
+    );
+    CREATE TABLE IF NOT EXISTS insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+`);
+
+// Why stock changed. Analytics count only 'terjual' as sales, so damaged or lost goods never inflate sales.
+const MOVEMENT_TYPES = ["terjual", "barang_datang", "rusak", "hilang", "koreksi"] as const;
+
+// Databases made before the type column existed get it once, filled in from the old free-text reason.
+const movementColumns = db.prepare(`PRAGMA table_info(stock_movements)`).all() as { name: string }[];
+
+if (!movementColumns.some((column) => column.name === "type")) {
+    db.exec(`
+        ALTER TABLE stock_movements ADD COLUMN type TEXT NOT NULL DEFAULT 'koreksi';
+        UPDATE stock_movements SET type = CASE
+            WHEN reason LIKE 'terjual%' OR reason LIKE '%jual%' THEN 'terjual'
+            WHEN reason LIKE 'barang datang%' THEN 'barang_datang'
+            WHEN reason LIKE '%rusak%' OR reason LIKE '%expired%' OR reason LIKE '%kedaluwarsa%' OR reason LIKE '%kadaluarsa%' THEN 'rusak'
+            WHEN reason LIKE '%hilang%' THEN 'hilang'
+            ELSE 'koreksi'
+        END;
+    `);
+}
 
 // Supplier pricing searches are restricted to these marketplace/distributor domains.
 const SUPPLIER_DOMAINS = [
@@ -45,17 +87,19 @@ server.registerTool(
     {
         description: "Check stock levels and identify products below their safety threshold",
         inputSchema: {
-            productId: z.string().describe("Product SKU, for example SKU001"),
+            productId: z.string().describe("Product SKU (e.g. SKU001) or words from the product name (e.g. Indomie Rendang)"),
         },
     },
        async ({ productId }) => {
+        // Every word must appear somewhere in the name or keyword, in any order,
+        // so "Indomie Rendang" finds "Indomie Goreng Rendang 91g".
+        const words = productId.trim().split(/\s+/).filter(Boolean).slice(0, 8);
         const products = db.prepare(`
             SELECT sku, item_name, current_stock, safety_threshold
             FROM inventory
             WHERE sku = ?
-               OR item_name LIKE ?
-               OR search_keyword LIKE ?
-        `).all(productId, `%${productId}%`, `%${productId}%`) as {
+               OR (${words.map(() => "(item_name || ' ' || COALESCE(search_keyword, '')) LIKE ?").join(" AND ") || "0"})
+        `).all(productId.trim(), ...words.map((word) => `%${word}%`)) as {
             sku: string;
             item_name: string;
             current_stock: number;
@@ -63,10 +107,17 @@ server.registerTool(
         }[];
 
         if (products.length === 0) {
+            // No literal match: give the AI every product so it can match by meaning
+            // (typos, cabe/cabai, ijo/hijau, missing words) instead of saying the product does not exist.
+            const all = db.prepare(`SELECT sku, item_name FROM inventory ORDER BY item_name LIMIT 200`).all() as { sku: string; item_name: string }[];
+
             return {
                 content: [{
                     type: "text" as const,
-                    text: `No products found for "${productId}".`,
+                    text: `No product name contains all the words of "${productId}". All products:\n`
+                        + all.map((p) => `- ${p.sku}: ${p.item_name}`).join("\n")
+                        + `\nIf one of these is clearly what the user means (typo, synonym, regional spelling, missing word), `
+                        + `call check_stock again with its SKU. If several could fit or none does, ask the user.`,
                 }],
             };
         }
@@ -144,6 +195,41 @@ server.registerTool(
 );
 
 
+// Average daily sales over the last 30 days (stock_movements rows of type 'terjual' only),
+// and how many days the current stock lasts at that pace. Computed here so the AI never estimates it.
+function describeSales(sku: string, currentStock: number) {
+    const { sold } = db.prepare(`
+        SELECT COALESCE(SUM(-change_pcs), 0) AS sold FROM stock_movements
+        WHERE sku = ? AND type = 'terjual' AND created_at >= datetime('now', '-30 days')
+    `).get(sku) as { sold: number };
+
+    if (sold === 0) {
+        return "Sales last 30 days: no sales recorded";
+    }
+
+    const perDay = sold / 30;
+    return `Sales last 30 days: ${sold} pcs (about ${perDay.toFixed(1)} pcs/day), current stock lasts about ${Math.floor(currentStock / perDay)} day(s)`;
+}
+
+// A purchase order that is already on the way (created from the GUI draft). The tables are created by
+// the web GUI, so they may not exist when only the CLI was used.
+function describeOpenOrder(sku: string) {
+    try {
+        const open = db.prepare(`
+            SELECT o.id, o.ordered_at, i.receive_pcs, i.supplier_name FROM purchase_order_items i
+            JOIN purchase_orders o ON o.id = i.order_id
+            WHERE i.sku = ? AND i.status = 'dipesan' ORDER BY o.id
+        `).all(sku) as { id: number; ordered_at: string; receive_pcs: number; supplier_name: string | null }[];
+
+        if (open.length === 0) return null;
+
+        return "Already ordered, waiting for delivery (do not suggest ordering again): " + open.map((o) =>
+            `PO-${String(o.id).padStart(4, "0")} ordered ${o.ordered_at} UTC, ${o.receive_pcs} pcs from ${o.supplier_name ?? "supplier not set"}`).join("; ");
+    } catch {
+        return null;
+    }
+}
+
 server.registerTool(
     "get_low_stock",
     {
@@ -177,7 +263,8 @@ server.registerTool(
             `SKU: ${product.sku}`,
             `Current stock: ${product.current_stock}`,
             `Safety threshold: ${product.safety_threshold}`,
-            describeOrder(product),
+            describeSales(product.sku, product.current_stock),
+            describeOpenOrder(product.sku) ?? describeOrder(product),
         ].join("\n")).join("\n\n");
 
         return {
@@ -433,6 +520,360 @@ server.registerTool(
             }],
             structuredContent: { sku: product?.sku ?? null, offers: offerData },
         };
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Schema exploration
+// ---------------------------------------------------------------------------
+
+const text = (value: string, isError = false) => ({
+    content: [{ type: "text" as const, text: value }],
+    ...(isError ? { isError: true } : {}),
+});
+
+const tableNames = () => (db.prepare(`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name
+`).all() as { name: string }[]).map((row) => row.name);
+
+server.registerTool(
+    "list_tables",
+    {
+        description: "List all tables in the InventoryWatch SQLite database with their row counts.",
+        inputSchema: {},
+    },
+    async () => {
+        const lines = tableNames().map((name) => {
+            const { count } = db.prepare(`SELECT COUNT(*) AS count FROM "${name}"`).get() as { count: number };
+            return `- ${name} (${count} rows)`;
+        });
+
+        return text(`Tables:\n${lines.join("\n")}`);
+    },
+);
+
+server.registerTool(
+    "describe_table",
+    {
+        description: "Show the columns, types, keys, and foreign keys of one table.",
+        inputSchema: {
+            table: z.string().describe("Table name from list_tables"),
+        },
+    },
+    async ({ table }) => {
+        // Only names that really exist are used in the PRAGMA, so the input cannot inject SQL.
+        if (!tableNames().includes(table)) {
+            return text(`Table "${table}" does not exist. Available tables: ${tableNames().join(", ")}`, true);
+        }
+
+        const columns = db.prepare(`PRAGMA table_info("${table}")`).all() as {
+            name: string; type: string; notnull: number; dflt_value: string | null; pk: number;
+        }[];
+        const foreignKeys = db.prepare(`PRAGMA foreign_key_list("${table}")`).all() as {
+            from: string; table: string; to: string;
+        }[];
+
+        const columnLines = columns.map((c) => `- ${c.name} ${c.type || "ANY"}`
+            + `${c.pk ? " PRIMARY KEY" : ""}${c.notnull ? " NOT NULL" : ""}`
+            + `${c.dflt_value !== null ? ` DEFAULT ${c.dflt_value}` : ""}`);
+        const fkLines = foreignKeys.map((fk) => `- ${fk.from} -> ${fk.table}.${fk.to}`);
+
+        return text(`Table ${table}:\nColumns:\n${columnLines.join("\n")}`
+            + (fkLines.length ? `\nForeign keys:\n${fkLines.join("\n")}` : ""));
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Advanced analytics (read-only SQL written by the AI)
+// ---------------------------------------------------------------------------
+
+const MAX_ROWS = 100;
+
+server.registerTool(
+    "read_query",
+    {
+        description: "Run one read-only SQL SELECT query (aggregates, JOINs, GROUP BY) for analytics. Writes are rejected; use the data tools to change data. Call list_tables / describe_table first if unsure of column names.",
+        inputSchema: {
+            sql: z.string().describe("A single SQLite SELECT statement"),
+        },
+    },
+    async ({ sql }) => {
+        try {
+            const statement = readOnlyDb.prepare(sql);
+
+            if (!statement.reader) {
+                return text("REJECTED: read_query only runs statements that return rows (SELECT). Use adjust_stock, add_product, or update_product to change data.", true);
+            }
+
+            const rows = statement.all() as Record<string, unknown>[];
+            const shown = rows.slice(0, MAX_ROWS);
+            const more = rows.length > MAX_ROWS ? `\n(${rows.length - MAX_ROWS} more rows not shown)` : "";
+
+            return text(`${rows.length} row(s):\n${shown.map((row) => JSON.stringify(row)).join("\n")}${more}`);
+        } catch (error) {
+            return text(`Query failed: ${error instanceof Error ? error.message : String(error)}`, true);
+        }
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Data manipulation (validated INSERT / UPDATE, no free-form write SQL)
+// ---------------------------------------------------------------------------
+
+type InventoryRow = {
+    sku: string;
+    item_name: string;
+    current_stock: number;
+    safety_threshold: number;
+    max_stock: number | null;
+    units_per_carton: number | null;
+    search_keyword: string | null;
+};
+
+const getBySku = (sku: string) => db.prepare(`SELECT * FROM inventory WHERE sku = ?`).get(sku) as InventoryRow | undefined;
+
+const isWhole = (value: number | undefined, min: number) => value === undefined || (Number.isInteger(value) && value >= min);
+
+server.registerTool(
+    "adjust_stock",
+    {
+        description: "Add or subtract stock for one product. Only call it when the exact product (SKU), the quantity, the unit, and the type of change are clear; otherwise ask the user first.",
+        inputSchema: {
+            sku: z.string().describe("Exact SKU, e.g. SKU001 (find it with check_stock first)"),
+            quantity: z.number().describe("How many. The type decides the direction (terjual/rusak/hilang subtract, barang_datang adds); only for koreksi use negative to subtract, e.g. -4"),
+            unit: z.enum(["pcs", "dus"]).describe("Unit of quantity; 'dus' is converted with the product's units_per_carton"),
+            type: z.enum(MOVEMENT_TYPES).describe("terjual = sold (subtract), barang_datang = goods received (add), rusak = damaged or expired (subtract), hilang = lost or stolen (subtract), koreksi = stock count correction (add or subtract)"),
+            reason: z.string().optional().describe("Optional extra note, e.g. 'kemasan sobek' or 'PO-0001'"),
+        },
+    },
+    async ({ sku, quantity, unit, type, reason }) => {
+        const product = getBySku(sku);
+
+        if (!product) {
+            return text(`REJECTED: no product with SKU "${sku}". Use check_stock to find the SKU.`, true);
+        }
+        if (!Number.isInteger(quantity) || quantity === 0) {
+            return text("REJECTED: quantity must be a non-zero whole number.", true);
+        }
+        if (unit === "dus" && !product.units_per_carton) {
+            return text(`REJECTED: units_per_carton is not set for ${product.item_name}, so 'dus' cannot be converted. Ask the user for the quantity in pcs.`, true);
+        }
+        // The type decides the direction, so a sale can never add stock and a delivery can never remove it.
+        // Only a stock count correction (koreksi) keeps the sign it was given.
+        const signed = type === "koreksi" ? quantity
+            : type === "barang_datang" ? Math.abs(quantity)
+            : -Math.abs(quantity);
+        const note = reason?.trim() || type.replace("_", " ");
+
+        const changePcs = unit === "dus" ? signed * product.units_per_carton! : signed;
+        const stockAfter = product.current_stock + changePcs;
+
+        if (stockAfter < 0) {
+            return text(`REJECTED: ${product.item_name} has ${product.current_stock} pcs; subtracting ${-changePcs} pcs would make stock negative.`, true);
+        }
+
+        db.transaction(() => {
+            db.prepare(`UPDATE inventory SET current_stock = ? WHERE sku = ?`).run(stockAfter, sku);
+            db.prepare(`
+                INSERT INTO stock_movements (sku, change_pcs, stock_before, stock_after, type, reason) VALUES (?, ?, ?, ?, ?, ?)
+            `).run(sku, changePcs, product.current_stock, stockAfter, type, note);
+        })();
+
+        const status = stockAfter < product.safety_threshold ? "still LOW STOCK" : "stock is sufficient";
+
+        return text(`Updated ${product.item_name} (${sku}): ${product.current_stock} -> ${stockAfter} pcs (${changePcs > 0 ? "+" : ""}${changePcs} pcs, type: ${type}, note: ${note}). Safety threshold ${product.safety_threshold}: ${status}.`);
+    },
+);
+
+server.registerTool(
+    "add_product",
+    {
+        description: "Add a new product to the inventory. The SKU is generated automatically. Only call it when the full product name (brand, variant, size), current stock, and safety threshold are known; ask the user for anything missing.",
+        inputSchema: {
+            itemName: z.string().describe("Full product name with brand, variant, and size, e.g. 'Minyak Goreng Bimoli 2L'"),
+            currentStock: z.number().describe("Current stock in pcs"),
+            safetyThreshold: z.number().describe("Minimum stock in pcs before restocking"),
+            maxStock: z.number().optional().describe("Stock level to refill up to, in pcs"),
+            unitsPerCarton: z.number().optional().describe("Items in one dus/karton from the supplier"),
+            searchKeyword: z.string().optional().describe("More specific name for supplier web search; defaults to itemName"),
+        },
+    },
+    async ({ itemName, currentStock, safetyThreshold, maxStock, unitsPerCarton, searchKeyword }) => {
+        const name = itemName.trim();
+
+        if (name.length < 3) {
+            return text("REJECTED: itemName is too short; ask for the full product name.", true);
+        }
+
+        const sizeProblem = checkProductSize(name);
+
+        if (sizeProblem) {
+            return text(`REJECTED: ${sizeProblem}`, true);
+        }
+        if (!isWhole(currentStock, 0) || !isWhole(safetyThreshold, 1) || !isWhole(maxStock, 1) || !isWhole(unitsPerCarton, 1)) {
+            return text("REJECTED: stock, threshold, max stock, and units per carton must be whole numbers (threshold and the others at least 1, stock at least 0).", true);
+        }
+        if (maxStock !== undefined && maxStock <= safetyThreshold) {
+            return text("REJECTED: maxStock must be higher than safetyThreshold.", true);
+        }
+
+        const duplicate = db.prepare(`SELECT sku, item_name FROM inventory WHERE item_name = ? COLLATE NOCASE`).get(name) as { sku: string; item_name: string } | undefined;
+
+        if (duplicate) {
+            return text(`REJECTED: "${duplicate.item_name}" already exists as ${duplicate.sku}. Use adjust_stock or update_product instead.`, true);
+        }
+
+        const { next } = db.prepare(`
+            SELECT COALESCE(MAX(CAST(SUBSTR(sku, 4) AS INTEGER)), 0) + 1 AS next FROM inventory WHERE sku LIKE 'SKU%'
+        `).get() as { next: number };
+        const sku = `SKU${String(next).padStart(3, "0")}`;
+
+        db.prepare(`
+            INSERT INTO inventory (sku, item_name, current_stock, safety_threshold, search_keyword, units_per_carton, max_stock)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(sku, name, currentStock, safetyThreshold, searchKeyword?.trim() || name, unitsPerCarton ?? null, maxStock ?? null);
+
+        const missing = [maxStock === undefined && "max stock", unitsPerCarton === undefined && "units per carton"].filter(Boolean);
+
+        return text(`Added ${name} as ${sku}: stock ${currentStock}, safety threshold ${safetyThreshold}`
+            + `${maxStock !== undefined ? `, max stock ${maxStock}` : ""}${unitsPerCarton !== undefined ? `, ${unitsPerCarton} pcs per dus` : ""}.`
+            + (missing.length ? ` Not set yet: ${missing.join(", ")} (needed for order quantities).` : ""));
+    },
+);
+
+server.registerTool(
+    "update_product",
+    {
+        description: "Change product settings: name, safety threshold, max stock, units per carton, or search keyword. Do not use it for stock quantities; use adjust_stock for that.",
+        inputSchema: {
+            sku: z.string().describe("Exact SKU, e.g. SKU002"),
+            itemName: z.string().optional(),
+            safetyThreshold: z.number().optional(),
+            maxStock: z.number().optional(),
+            unitsPerCarton: z.number().optional(),
+            searchKeyword: z.string().optional(),
+        },
+    },
+    async ({ sku, itemName, safetyThreshold, maxStock, unitsPerCarton, searchKeyword }) => {
+        const product = getBySku(sku);
+
+        if (!product) {
+            return text(`REJECTED: no product with SKU "${sku}".`, true);
+        }
+        if (!isWhole(safetyThreshold, 1) || !isWhole(maxStock, 1) || !isWhole(unitsPerCarton, 1)) {
+            return text("REJECTED: threshold, max stock, and units per carton must be whole numbers of at least 1.", true);
+        }
+
+        const sizeProblem = itemName?.trim() ? checkProductSize(itemName.trim()) : null;
+
+        if (sizeProblem) {
+            return text(`REJECTED: ${sizeProblem}`, true);
+        }
+
+        const next = {
+            item_name: itemName?.trim() || product.item_name,
+            safety_threshold: safetyThreshold ?? product.safety_threshold,
+            max_stock: maxStock ?? product.max_stock,
+            units_per_carton: unitsPerCarton ?? product.units_per_carton,
+            search_keyword: searchKeyword?.trim() || product.search_keyword,
+        };
+
+        if (next.max_stock !== null && next.max_stock <= next.safety_threshold) {
+            return text(`REJECTED: max stock (${next.max_stock}) must be higher than the safety threshold (${next.safety_threshold}).`, true);
+        }
+
+        const changes = (Object.keys(next) as (keyof typeof next)[])
+            .filter((key) => next[key] !== product[key])
+            .map((key) => `${key}: ${product[key]} -> ${next[key]}`);
+
+        if (changes.length === 0) {
+            return text("No changes: every given value is the same as before, or no field was given.", true);
+        }
+
+        db.prepare(`
+            UPDATE inventory
+            SET item_name = @item_name, safety_threshold = @safety_threshold, max_stock = @max_stock,
+                units_per_carton = @units_per_carton, search_keyword = @search_keyword
+            WHERE sku = @sku
+        `).run({ ...next, sku });
+
+        return text(`Updated ${product.item_name} (${sku}):\n${changes.map((c) => `- ${c}`).join("\n")}`);
+    },
+);
+
+server.registerTool(
+    "delete_product",
+    {
+        description: "Permanently delete one product (e.g. added by mistake or no longer sold), together with its draft order item, saved supplier offers, and stock movement history. Only call it with the exact SKU after the user clearly asked to delete that product.",
+        inputSchema: {
+            sku: z.string().describe("Exact SKU of the product to delete, e.g. SKU006 (find it with check_stock first)"),
+        },
+    },
+    async ({ sku }) => {
+        const product = getBySku(sku);
+
+        if (!product) {
+            return text(`REJECTED: no product with SKU "${sku}". Use check_stock to find the SKU.`, true);
+        }
+
+        // Child rows reference inventory(sku), so they are removed first, all in one transaction.
+        const removed = db.transaction(() => ({
+            draft: db.prepare(`DELETE FROM draft_order_items WHERE sku = ?`).run(sku).changes,
+            offers: db.prepare(`DELETE FROM supplier_offers WHERE sku = ?`).run(sku).changes,
+            movements: db.prepare(`DELETE FROM stock_movements WHERE sku = ?`).run(sku).changes,
+            product: db.prepare(`DELETE FROM inventory WHERE sku = ?`).run(sku).changes,
+        }))();
+
+        return text(`Deleted ${product.item_name} (${sku}), last stock ${product.current_stock} pcs. `
+            + `Also removed: ${removed.draft} draft order item(s), ${removed.offers} supplier offer(s), ${removed.movements} stock movement(s).`);
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Automatic insights (memo resource)
+// ---------------------------------------------------------------------------
+
+function insightsMemo() {
+    const rows = db.prepare(`SELECT text, created_at FROM insights ORDER BY id`).all() as { text: string; created_at: string }[];
+
+    if (rows.length === 0) {
+        return "# Insight InventoryWatch\n\nBelum ada insight yang dicatat.";
+    }
+
+    return `# Insight InventoryWatch\n\n${rows.map((row) => `- [${row.created_at} UTC] ${row.text}`).join("\n")}`;
+}
+
+server.registerResource(
+    "insights",
+    "memo://insights",
+    {
+        title: "Business insights memo",
+        description: "Running memo of business insights the agent recorded while analysing inventory and supplier data.",
+        mimeType: "text/markdown",
+    },
+    async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: "text/markdown", text: insightsMemo() }],
+    }),
+);
+
+server.registerTool(
+    "append_insight",
+    {
+        description: "Record one business insight in the memo://insights resource after analysing data, e.g. which products are most critical or which supplier is cheapest. Returns the whole memo.",
+        inputSchema: {
+            insight: z.string().describe("One short, factual insight based on tool results, in the user's language"),
+        },
+    },
+    async ({ insight }) => {
+        const value = insight.trim();
+
+        if (value.length < 10) {
+            return text("REJECTED: the insight is too short.", true);
+        }
+
+        db.prepare(`INSERT INTO insights (text) VALUES (?)`).run(value);
+
+        return text(`Insight saved.\n\n${insightsMemo()}`);
     },
 );
 
